@@ -1,0 +1,21 @@
+# 依赖的第三方开源项目(深拷贝,不入库)
+deepseek-harness-master/
+
+# 运行时数据(转录/主题/实例/agents.json)
+data/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# 前端
+frontend/node_modules/
+
+# 隐私/密钥(防误提交)
+.env
+.env.*
+*.key
+*.pem
+*.local.yaml

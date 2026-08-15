@@ -1,0 +1,10 @@
+{
+  "name": "Agent Hub",
+  "short_name": "AgentHub",
+  "description": "多 agent 统一 Web 聊天",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ffffff",
+  "theme_color": "#0969da"
+}

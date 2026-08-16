@@ -578,7 +578,7 @@ select:focus { outline: none; border-color: var(--accent); }
 /* important:重要消息(带框+底色+markdown),用于中间结论/需用户关注的汇报 */
 .sys-important {
   color: var(--fg); font-size: 13px;
-  border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  border: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg-soft) 55%, transparent);
 }
 /* choice:启动选择项卡片(等宽 + accent 左边条,左对齐) */

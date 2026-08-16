@@ -539,8 +539,17 @@ async def theme_bg(request):
 # 应用
 # ---------------------------------------------------------------------------
 
+@web.middleware
+async def _favicon_no_cache(request, handler):
+    """favicon 响应强制 no-cache:浏览器对 favicon 缓存极顽固,不加会导致换图标不生效。"""
+    resp = await handler(request)
+    if request.path.startswith("/static/favicon"):
+        resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
 def create_app(data_dir="data", host="127.0.0.1", port=8500):
-    app = web.Application()
+    app = web.Application(middlewares=[_favicon_no_cache])
     app["hub"] = Hub(data_dir, host, port)
     # 启动时恢复上次在跑的实例；优雅关停：杀掉所有实例
     app["hub"].instances.restore()

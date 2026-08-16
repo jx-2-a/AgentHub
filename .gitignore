@@ -19,3 +19,9 @@ frontend/node_modules/
 *.key
 *.pem
 *.local.yaml
+
+# Gotify 服务器(第三方二进制 + 运行时数据,不入库;启动脚本按路径引用)
+gotify/
+
+# 机器相关的启动快捷方式(由 setup_autostart.ps1 生成)
+启动AgentHub.lnk

@@ -2,10 +2,14 @@
 
 每个连接的 agent = 一个 Session：持有 agent 的 WS、浏览器 viewer 集合、内存历史。
 同一 agent 断线重连（register 带 resume_sid）复用原 Session，记录续写。
+会话元数据落盘(data/sessions.json):Hub 重启后 restore() 重建注册表 + 从转录重放历史,
+让「重启服务」后 agent 能真正续接原会话、浏览器仍能看到旧记录。
 """
+import json
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from pathlib import Path
 
 
 @dataclass
@@ -55,15 +59,62 @@ class Session:
 
 
 class SessionRegistry:
-    """sid → Session。单事件循环访问，无需锁。"""
+    """sid → Session。单事件循环访问，无需锁。data_dir 给定时会落盘会话元数据。"""
 
-    def __init__(self):
+    def __init__(self, data_dir=None):
         self._sessions = {}
         self._counter = 0
+        self._state_file = Path(data_dir) / "sessions.json" if data_dir else None
 
     def _next_sid(self):
         self._counter += 1
         return str(self._counter)
+
+    def persist(self):
+        """把会话元数据落盘,供重启恢复。"""
+        if not self._state_file:
+            return
+        try:
+            data = [{
+                "sid": s.sid, "label": s.label,
+                "file_roots": list(s.file_roots),
+                "capabilities": list(s.capabilities),
+                "instance_id": s.instance_id,
+                "project_root": s.project_root,
+                "created": s.created,
+            } for s in self._sessions.values()]
+            self._state_file.write_text(
+                json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+        except OSError:
+            pass
+
+    def restore(self, transcripts):
+        """重建注册表:从 sessions.json 恢复会话 + 从转录重放历史(重连/回看有旧记录)。"""
+        if not self._state_file or not self._state_file.exists():
+            return
+        try:
+            data = json.loads(self._state_file.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        for item in data:
+            sid = str(item.get("sid", ""))
+            if not sid:
+                continue
+            s = Session(
+                sid=sid,
+                label=item.get("label") or "agent",
+                file_roots=list(item.get("file_roots") or []),
+                capabilities=list(item.get("capabilities") or []),
+                created=float(item.get("created") or time.time()),
+            )
+            s.instance_id = item.get("instance_id")
+            s.project_root = item.get("project_root")
+            s.status = "disconnected"   # 重启后 agent 还没连回来
+            for ev in transcripts.read(sid):
+                s.history.append(ev)
+            self._sessions[sid] = s
+            if sid.isdigit():
+                self._counter = max(self._counter, int(sid))
 
     def get(self, sid):
         return self._sessions.get(sid)
@@ -76,14 +127,46 @@ class SessionRegistry:
         s = Session(sid=sid, label=label, file_roots=list(file_roots),
                     capabilities=list(capabilities))
         self._sessions[sid] = s
+        self.persist()
         return s
 
+    @staticmethod
+    def _free(s):
+        """会话可复用:无 agent 连接,或连接已关闭(agent 刚被杀/重启)。"""
+        return s.agent_ws is None or getattr(s.agent_ws, "closed", False)
+
     def reuse(self, sid, label):
-        """按 resume_sid 复用断线会话（label 一致且非在线）。"""
+        """按 resume_sid 复用断线会话（label 一致且可复用）。"""
         s = self._sessions.get(sid)
-        if s and s.label == label and s.agent_ws is None:
+        if s and s.label == label and self._free(s):
             return s
         return None
 
+    def by_instance(self, instance_id):
+        """按实例 id 找回原会话（agent 状态里的 resume_sid 可能过期时兜底）。
+        取该实例最近创建的会话(历史累积的旧会话不干扰)。"""
+        if not instance_id:
+            return None
+        best = None
+        for s in self._sessions.values():
+            if s.instance_id == instance_id and self._free(s):
+                if best is None or s.created > best.created:
+                    best = s
+        return best
+
     def remove(self, sid):
         self._sessions.pop(sid, None)
+        self.persist()
+
+    def prune(self, instances):
+        """清理孤儿会话:instance_id 指向已不存在的实例(删除/重启遗留)。"""
+        if not self._state_file:
+            return
+        live_ids = {i["id"] for i in instances.list()}
+        removed = False
+        for sid, s in list(self._sessions.items()):
+            if s.instance_id and s.instance_id not in live_ids:
+                self._sessions.pop(sid, None)
+                removed = True
+        if removed:
+            self.persist()

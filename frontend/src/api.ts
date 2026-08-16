@@ -73,7 +73,7 @@ export async function trimSession(sid: string, keep: number): Promise<void> {
 export async function uploadBackground(file: Blob, filename: string): Promise<string> {
   const fd = new FormData();
   fd.append('file', file, filename);
-  const r = await fetch('/api/files/upload', { method: 'POST', body: fd });
+  const r = await fetch('/api/theme/upload', { method: 'POST', body: fd });
   const d = await r.json();
   if (d.error) throw new Error(String(d.error));
   return String(d.url);

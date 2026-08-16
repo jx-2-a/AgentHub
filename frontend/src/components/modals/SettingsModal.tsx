@@ -27,6 +27,11 @@ export function SettingsModal() {
     openTerm();
   };
 
+  const openSystem = () => {
+    close();
+    navigate('/system');
+  };
+
   return (
     <div
       className="modal"
@@ -56,14 +61,16 @@ export function SettingsModal() {
             ) : (
               <div className="control-panel">
                 <div className="settings-label">系统控制</div>
-                <p className="control-hint">终端与文件管理在这里进入;终端会再次校验 token。</p>
+                <p className="control-hint">电脑状态、终端与文件管理在这里进入;终端会再次校验 token。</p>
+                <button className="control-btn" onClick={openSystem}>
+                  <span className="cb-main">电脑状态</span>
+                  <span className="cb-sub">内存/网络/Tailscale/VPN · 工具</span>
+                </button>
                 <button className="control-btn" onClick={openTerminal}>
-                  <span className="cb-ico">🖥</span>
                   <span className="cb-main">终端</span>
                   <span className="cb-sub">系统 Shell · 需 token</span>
                 </button>
                 <button className="control-btn" onClick={openFiles}>
-                  <span className="cb-ico">📂</span>
                   <span className="cb-main">打开全部文件</span>
                   <span className="cb-sub">大文件页 · 可收藏常用目录</span>
                 </button>

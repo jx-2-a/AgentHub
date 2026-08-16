@@ -40,6 +40,7 @@ interface ChatStore extends ChatState {
   clearTimer(): void;
   flushOutbox(): void;
   trimMessages(keep: number): void;
+  finalizeBuffers(): void; // 断线时把开着的思考/回复块收成闭合,不留"思考中…"/光标
   sendMessage(text: string): void;
   sendAskAnswer(id: string, text: string | null): void;
   sendRequirementAnswer(id: string, values: Record<string, string> | null): void;
@@ -131,6 +132,26 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     set({ messages, toolIndex });
   },
 
+  finalizeBuffers() {
+    set((s) => {
+      let messages = s.messages;
+      if (s.thinkingOpen) {
+        messages = [...messages, { kind: 'thinking', text: s.thinkingBuffer, closed: true }];
+      }
+      if (s.assistantOpen) {
+        messages = [...messages, { kind: 'assistant', text: s.assistantBuffer, md: null }];
+      }
+      return {
+        ...s,
+        messages,
+        thinkingOpen: false,
+        thinkingBuffer: '',
+        assistantOpen: false,
+        assistantBuffer: '',
+      };
+    });
+  },
+
   sendMessage(text) {
     if (!sendIfOpen({ type: 'message', text })) {
       get().notify('连接已断开，消息将在重连后自动发送');
@@ -152,5 +173,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
   interrupt() {
     if (!sendIfOpen({ type: 'interrupt' })) get().notify('连接已断开');
+    get().finalizeBuffers(); // 手动打断:立即收掉思考/回复块(不等 agent 的 thinking_end)
   },
 }));

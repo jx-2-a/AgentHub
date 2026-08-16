@@ -5,19 +5,27 @@
 """
 import asyncio
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 from aiohttp import web
 
 from . import agents as agents_mod
 from . import files_api
+from . import notify
 from . import relay
+from . import system as system_mod
 from . import term
 from .files import guess_type, resolve
 from .instances import InstanceManager
 from .sessions import SessionRegistry
+from .settings import HubSettings
 from .theme import PRESETS, ThemeStore
 from .transcripts import TranscriptStore
+
+_HUB_ROOT = Path(__file__).resolve().parent.parent
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -28,10 +36,13 @@ class Hub:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.host = host
         self.port = port
-        self.registry = SessionRegistry()
         self.transcripts = TranscriptStore(self.data_dir)
+        self.registry = SessionRegistry(self.data_dir)
+        self.registry.restore(self.transcripts)   # 重启后重建会话 + 从转录重放历史
         self.themes = ThemeStore(self.data_dir)
         self.instances = InstanceManager(port, host, self.data_dir)
+        self.settings = HubSettings(self.data_dir)
+        notify.set_enabled(self.settings.get("notify_enabled", True))  # 通知开关(持久化)
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +92,22 @@ async def ws_agent(request):
             label = data.get("label", "agent")
             resume = data.get("resume_sid")
             instance_id = data.get("instance_id")
-            session = hub.registry.reuse(resume, label) if resume else None
+            # 用户新建的实例(fresh)→ 不续接旧会话(即使 agent 状态里带着旧 sid)
+            inst = hub.instances.get(instance_id) if instance_id else None
+            fresh_instance = bool(instance_id) and bool(getattr(inst, "fresh", True))
+            session = None
+            if not fresh_instance:
+                # 优先续接重启时指定的旧会话(restart?resume=1 会把旧 sid 记在 inst.resume_sid)
+                if inst and inst.resume_sid:
+                    cand = hub.registry.get(inst.resume_sid)
+                    if cand and hub.registry._free(cand):
+                        session = cand
+                        inst.resume_sid = None   # 用过即清
+                if session is None and resume:
+                    session = hub.registry.reuse(resume, label)
+                if session is None and instance_id:
+                    # 重启后 agent 状态里的 resume_sid 可能是旧的 → 按实例 id 找回原会话
+                    session = hub.registry.by_instance(instance_id)
             if session is None:
                 session = hub.registry.create(label, data.get("file_roots", []),
                                               data.get("capabilities", []))
@@ -101,6 +127,7 @@ async def ws_agent(request):
                 "type": "meta", "label": label, "file_roots": session.file_roots,
                 "instance_id": instance_id,
             })
+            hub.registry.persist()   # 会话归属/元数据有变 → 落盘
             relay.broadcast(session, {"type": "session_state", "status": "connected"})
             break
     if session is None:
@@ -321,6 +348,99 @@ async def api_theme(request):
     return web.json_response({"presets": PRESETS})
 
 
+# ---------------------------------------------------------------------------
+# 系统状态 / 工具(设置 → 控制 → 电脑状态;免登录,Tailscale 当边界)
+# ---------------------------------------------------------------------------
+
+async def api_system(request):
+    """电脑状态汇总:内存/CPU/磁盘/Tailscale/VPN/本服务进程/主机。"""
+    hub = request.app["hub"]
+    known: list[dict] = [{"pid": os.getpid(), "name": "AgentHub", "role": "Hub"}]
+    for inst in hub.instances.list():
+        if inst.get("pid"):
+            known.append({
+                "pid": inst["pid"],
+                "name": inst.get("label") or inst.get("agent_key"),
+                "role": "Agent",
+            })
+    for term_id, t in term._terms.items():
+        if t["proc"].poll() is None:
+            known.append({"pid": t["proc"].pid, "name": f"ttyd-{term_id}", "role": "终端"})
+    return web.json_response(system_mod.get_system_report(known))
+
+
+async def api_system_memfree(request):
+    return web.json_response(system_mod.free_memory())
+
+
+async def api_system_tailscale(request):
+    action = request.match_info["action"]  # up / down
+    code, text = system_mod.tailscale_action(action)
+    return web.json_response({"ok": code == 0, "detail": text})
+
+
+async def api_system_vpn(request):
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    act = data.get("action", "")
+    if act not in ("connect", "disconnect"):
+        return web.json_response({"error": "action 须为 connect/disconnect"}, status=400)
+    return web.json_response(system_mod.vpn_action(data.get("name", ""), act == "connect"))
+
+
+async def api_system_open(request):
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    return web.json_response(system_mod.open_folder(data.get("path", "")))
+
+
+async def api_system_settings(request):
+    return web.json_response({
+        "notify_enabled": notify.is_enabled(),
+        "notify_configured": notify.is_configured(),
+        "notify_mode": notify.mode(),
+    })
+
+
+async def api_system_settings_notify(request):
+    """通知推送开关(持久化到 data/settings.json,重启后仍生效)。"""
+    hub = request.app["hub"]
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    on = bool(data.get("enabled"))
+    notify.set_enabled(on)
+    hub.settings.set("notify_enabled", on)
+    return web.json_response({"ok": True, "notify_enabled": on})
+
+
+async def api_system_restart(request):
+    """重启 Hub 服务:spawn 独立重启助手,先停实例/终端,然后退出自己。"""
+    hub = request.app["hub"]
+    cmd = [sys.executable, "-m", "hub.relaunch",
+           str(hub.port), str(hub.host), str(hub.data_dir)]
+    try:
+        subprocess.Popen(
+            cmd, cwd=str(_HUB_ROOT),
+            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except Exception as e:
+        return web.json_response({"ok": False, "detail": str(e)}, status=500)
+    # 先停实例/终端,避免旧实例被新 hub 的 restore() 重复拉起
+    hub.registry.persist()   # 落盘会话,重启后 agent 能续接原 sid
+    hub.instances.shutdown()
+    term.stop_all()
+    # 响应发回后再退出;重启助手已接管后续拉起
+    asyncio.get_running_loop().call_later(1.2, lambda: os._exit(0))
+    return web.json_response({"ok": True, "detail": "正在重启服务…"})
+
+
 async def upload_background(request):
     hub = request.app["hub"]
     try:
@@ -355,8 +475,10 @@ def create_app(data_dir="data", host="127.0.0.1", port=8500):
     app["hub"] = Hub(data_dir, host, port)
     # 启动时恢复上次在跑的实例；优雅关停：杀掉所有实例
     app["hub"].instances.restore()
+    app["hub"].registry.prune(app["hub"].instances)   # 清理已删除/重启遗留的孤儿会话
 
     async def _shutdown(_app):
+        _app["hub"].registry.persist()   # 优雅关停:落盘会话元数据
         _app["hub"].instances.shutdown()
     app.on_shutdown.append(_shutdown)
 
@@ -373,6 +495,8 @@ def create_app(data_dir="data", host="127.0.0.1", port=8500):
     app.router.add_get("/api/files", files_api.api_list)
     app.router.add_post("/api/files/upload", files_api.api_upload)
     app.router.add_get("/api/file", files_api.api_file)
+    # 主题背景图上传走独立路由(避免被 /api/files/upload 抢先)
+    app.router.add_post("/api/theme/upload", upload_background)
 
     app.router.add_get("/api/sessions", api_sessions)
     app.router.add_get("/api/agents", api_agents)
@@ -385,7 +509,14 @@ def create_app(data_dir="data", host="127.0.0.1", port=8500):
     app.router.add_delete("/api/transcript/{sid}", api_delete_transcript)
     app.router.add_post("/api/sessions/{sid}/trim", api_trim_session)
     app.router.add_get("/api/theme", api_theme)
-    app.router.add_post("/api/files/upload", upload_background)
+    app.router.add_get("/api/system", api_system)
+    app.router.add_post("/api/system/memfree", api_system_memfree)
+    app.router.add_post("/api/system/tailscale/{action}", api_system_tailscale)
+    app.router.add_post("/api/system/vpn", api_system_vpn)
+    app.router.add_post("/api/system/open", api_system_open)
+    app.router.add_get("/api/system/settings", api_system_settings)
+    app.router.add_post("/api/system/settings/notify", api_system_settings_notify)
+    app.router.add_post("/api/system/restart", api_system_restart)
     app.router.add_get("/file", file_handler)
     app.router.add_get("/theme/bg/{name}", theme_bg)
 

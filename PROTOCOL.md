@@ -201,8 +201,10 @@ Agent 循环跑在**独立工作线程**，方法必须**线程安全**。
   （`venv python <cmd> --hub ws://... --label ... --file-root ...`，env `AGENT_HUB_INSTANCE=<id>`）。
 - 关联：register 带 `instance_id` → 实例↔会话。
 - 前提条件（随启随用）：启动后 `requirement` 收集前提（SSH/选实验等），满足后 `set_meta` 分类。
-- **自动恢复**：在跑实例列表落盘 `data/instances/active.json`；Hub 重启时自动重新拉起
-  （agent 重连后新会话；旧会话记录仍在 `/transcripts/` 可回看）。记录永不丢。
+- **自动恢复**：在跑实例列表落盘 `data/instances/active.json`（含实例 id，重启复用）；
+  会话元数据落盘 `data/sessions.json`，Hub 重启时重建注册表 + 从转录重放历史。
+  agent 重连带 `resume_sid`/`instance_id` → **续接原会话**（`inst.resume_sid` + `by_instance` 兜底，
+  已关闭的 agent 连接视为空闲）。记录永不丢。
 
 ---
 
@@ -236,3 +238,64 @@ Agent 循环跑在**独立工作线程**，方法必须**线程安全**。
 
 Agent 接入三步：① 安装 `agentweb` ② 实现 BaseSession ③ 主线程 `client.run()`、
 agent 循环放工作线程、结束 `client.stop()`。
+
+---
+
+## 12. 对 agent 的操作要求（实战补充）
+
+1. 用 agentweb SDK（`WebSessionClient`）连 `/ws/agent`；`--hub` 传地址。
+2. register 必须带 `label` + `file_roots`；续接带 `resume_sid`、关联实例带 `instance_id`
+   （env `AGENT_HUB_INSTANCE` 会自动带）。
+3. 事件类型严格走上表，别自造（前端 reducer 不认识的忽略）。
+4. **思维链**：模型返回 reasoning 时发 `thinking_delta` 增量；思考结束/转工具/**流被中断**
+   都必须发 `thinking_end`，否则前端思考块永远「思考中…」卡住。
+5. **流式必须开 `stream: true`**（见坑 #2），否则 API 返回整包，thinking_delta 全丢。
+6. **一次性前提（实验路径）** 存自己的 `<workspace>/config/agent_state.json`（sid + project_root），
+   重启续用；**新实例**时 hub 注入 `AGENT_HUB_FRESH=1`，agent 应据此忽略旧状态、重新选实验。
+7. **状态 ≠ 思维链**：「思考中…/分析中…」用 `status`（标题栏），真正的思维内容必须 `thinking_delta`。
+8. 续接优先用 hub 的 `inst.resume_sid`（重启时记下的旧 sid）+ `by_instance` 兜底，
+   **不依赖 agent 上报的 sid 是否最新**；agent **别自己传 `--resume`**（argparse 会崩）。
+9. **agent_state.json 要勤存**（注册成功即写一次，实验选定再写一次）—— hub 重启是硬杀，
+   只在退出时存会丢。
+
+---
+
+## 13. 踩坑记录（按重要性）
+
+1. **`chat_stream` 漏 `stream: true`** → DeepSeek 返回一整包 JSON，回退解析从不 yield `reasoning`，
+   `thinking_end` 有空壳但思维链全丢。这是思维链显示不出来的真正根因。修：请求体加
+   `"stream": True` + 回退路径也 yield reasoning。
+2. **`thinking` 默认关**：config.yaml `thinking: false` → 模型不返回 `reasoning_content`。
+   要显式 `thinking: true` + `reasoning_effort`；且 DeepSeek 思考模式下 `temperature` 不生效。
+3. **ttyd 终端协议**：帧类型是 **ASCII 字符码**（`'0'`=输入、`'1'`=resize），不是数字 0/1；
+   必须带 `protocols=["tty"]` 子协议；首帧 init JSON。hub 会话要持久化（断线不丢）。
+4. **前端「切走再切回」思考块卡住**：浏览器 WS 到 hub 不断（只有 agent 断），
+   `session_state: disconnected` 时前端要**收掉开着的思考/回复块**（thinking_end 可能永远不来）。
+   手动打断 ⏹ 也要立即收块。
+5. **已闭合消息 `md:null` 也闪光标**：光标 ▍ 只该属于「正在流式」的块（用 `open` 属性控制）；
+   否则 `assistant_end`/收块生成的闭合消息永远闪。
+6. **置顶按 label 的坑**：两个实例同名 label → 新实例误进置顶、新旧难分。改**按实例 id 置顶**
+   （实例 id 已跨重启稳定）。
+7. **实例 id 跨重启不稳定**：`active.json` 原本不存 id，restore 重新编号。改：存 id、restore 复用
+   → `by_instance` 才能续接。
+8. **`resume_sid` 过期**：agent 状态文件里的 sid 可能是旧的（硬杀没更新）。hub 用
+   `inst.resume_sid`（重启时记的）+ `by_instance`（按实例 id 找回最近会话）兜底，且
+   **已关闭的 agent 连接视为空闲**（处理 kill 竞态）。
+9. **agent 不接受 `--resume`**：hub 一传 agent 就 argparse 崩。续接走 agent 自己的
+   agent_state.json + hub 兜底，不传 `--resume`。
+10. **重启硬杀丢 agent 状态**：`agent_state.json` 只在优雅退出写。加 autosave 线程，
+    注册成功/实验选定就落盘。
+11. **`fresh` 标记不清**：新实例重连被当「新建」不断开新会话。`link_session` 首次建会话后要置
+    `fresh=False`。
+12. **孤儿会话累积**：重启续接失败会开新会话，旧会话残留。启动时 `prune()` 清掉
+    「实例已删除/不存在」的会话；续接修好后不再累积。
+13. **会话持久化**：hub 的 `SessionRegistry` 是内存的，重启全丢。落盘 `data/sessions.json` +
+    启动从转录重放历史 → agent 重启能续接、浏览器回看有旧记录。
+14. **Vite dev 代理**：`/term/ws` 要单独配 `{target: ws://127.0.0.1:8500, ws: true}`，
+    否则开发模式下终端连不上（生产同源没事）。
+15. **Windows 编码坑**：GBK 控制台 + 中文，curl/print/emoji 输出会崩（`UnicodeEncodeError`）；
+    脚本里用 ASCII 或显式 UTF-8。
+16. **手机推送**：只在 `ask`/`requirement` 明确信号触发，30s/会话节流；开关持久化在
+    `data/settings.json`。
+17. **文件整机浏览 vs 收藏边界**：无 `root` 参数=整机（此电脑→各盘）；带 `root`（绝对/相对）=
+    收藏边界不可越界；收藏按绝对路径存，任意目录可收藏。

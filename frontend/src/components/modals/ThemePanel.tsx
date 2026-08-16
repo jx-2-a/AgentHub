@@ -1,20 +1,34 @@
-import { useEffect, useState } from 'react';
-import { getThemePresets, uploadBackground, type ThemePreset } from '../../api';
+import { useState } from 'react';
+import { uploadBackground } from '../../api';
 import { useThemeStore } from '../../stores/themeStore';
+import { ACCENT_NAMES, THEME_NAMES, type AccentKind, type ThemeKind } from '../../theme';
 
-const THEME_KEYS = ['light', 'dark', 'green'] as const;
-const ACCENT_KEYS = ['blue', 'purple', 'red', 'amber'] as const;
+const THEME_KEYS: ThemeKind[] = ['light', 'dark', 'green', 'sepia', 'ocean'];
+const ACCENT_KEYS: AccentKind[] = ['blue', 'purple', 'red', 'amber', 'cyan', 'pink', 'orange'];
 
-/** 外观面板(设置面板左侧列表的「外观」页):主题/强调色/背景图。 */
+// 预览色块:每个主题给 bg/fg/accent 三点(纯视觉提示,不参与实际应用)
+const THEME_PREVIEW: Record<ThemeKind, { bg: string; fg: string; accent: string }> = {
+  light: { bg: '#ffffff', fg: '#1f2328', accent: '#0969da' },
+  dark: { bg: '#0d1117', fg: '#e6edf3', accent: '#58a6ff' },
+  green: { bg: '#0f1c14', fg: '#e6f4ea', accent: '#2ea043' },
+  sepia: { bg: '#f7f2e7', fg: '#3f3a30', accent: '#b0773c' },
+  ocean: { bg: '#0a1e2a', fg: '#dceff7', accent: '#2aa9d4' },
+};
+const ACCENT_COLORS: Record<AccentKind, string> = {
+  blue: '#3b82f6',
+  purple: '#8b5cf6',
+  red: '#ef4444',
+  amber: '#f59e0b',
+  cyan: '#06b6d4',
+  pink: '#ec4899',
+  orange: '#f97316',
+};
+
+/** 外观面板(设置面板「外观」页):主题/强调色/背景图。名字本地化,不再闪英文。 */
 export function ThemePanel() {
   const theme = useThemeStore((s) => s.theme);
   const setTheme = useThemeStore((s) => s.setTheme);
-  const [presets, setPresets] = useState<Record<string, ThemePreset>>({});
   const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    getThemePresets().then(setPresets).catch(() => setPresets({}));
-  }, []);
 
   const onUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -38,10 +52,15 @@ export function ThemePanel() {
           {THEME_KEYS.map((k) => (
             <button
               key={k}
-              className={theme.theme === k ? 'selected' : ''}
+              className={`theme-option${theme.theme === k ? ' selected' : ''}`}
               onClick={() => setTheme({ theme: k })}
+              title={THEME_NAMES[k]}
             >
-              {presets[k]?.name ?? k}
+              <span className="th-swatch" style={{ background: THEME_PREVIEW[k].bg }}>
+                <span className="th-dot" style={{ background: THEME_PREVIEW[k].accent }} />
+                <span className="th-line" style={{ background: THEME_PREVIEW[k].fg }} />
+              </span>
+              {THEME_NAMES[k]}
             </button>
           ))}
         </div>
@@ -52,10 +71,11 @@ export function ThemePanel() {
           {ACCENT_KEYS.map((k) => (
             <button
               key={k}
-              className={theme.accent === k ? 'selected' : ''}
+              className={`accent-option${theme.accent === k ? ' selected' : ''}`}
               onClick={() => setTheme({ accent: k })}
             >
-              {k}
+              <span className="ac-dot" style={{ background: ACCENT_COLORS[k] }} />
+              {ACCENT_NAMES[k]}
             </button>
           ))}
         </div>

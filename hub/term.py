@@ -208,6 +208,12 @@ def stop_terminal(term_id: str):
     _cleanup(term_id)
 
 
+def stop_all():
+    """停止所有终端(重启 hub 时用)。"""
+    for term_id in list(_terms):
+        _cleanup(term_id)
+
+
 async def proxy_terminal(term_id: str, browser_ws) -> bool:
     """挂一个浏览器 viewer 到持久会话。返回是否连接成功。"""
     sess = _sessions.get(term_id)

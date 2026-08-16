@@ -12,8 +12,9 @@ export function InstanceItem({ instance }: { instance: Instance }) {
   const refresh = useHubStore((s) => s.refresh);
   const closeSidebar = useUiStore((s) => s.closeSidebar);
   const active = useUiStore((s) => s.activeSid) === instance.session_id;
-  const pinned = useUiStore((s) => s.pinned.includes(instance.label));
+  const pinned = useUiStore((s) => s.pinned.includes(instance.id));
   const togglePin = useUiStore((s) => s.togglePin);
+  const unpin = useUiStore((s) => s.unpin);
   const isMobile = useMediaQuery('(max-width: 768px)');
 
   const select = () => {
@@ -29,9 +30,13 @@ export function InstanceItem({ instance }: { instance: Instance }) {
   const openMenu = (x: number, y: number) => {
     const items: ContextMenuItem[] = [
       {
+        label: pinned ? '取消置顶' : '置顶',
+        onClick: () => togglePin(instance.id),
+      },
+      {
         label: '重启',
         onClick: () => {
-          void restartInstance(instance.id).then(refresh);
+          void restartInstance(instance.id, true).then(refresh); // resume=1:续接原会话/上下文
         },
       },
     ];
@@ -66,6 +71,7 @@ export function InstanceItem({ instance }: { instance: Instance }) {
       label: '完全归档',
       onClick: () => {
         if (window.confirm(`完全归档实例 ${instance.label}？实例将从列表移除，记录保留在归档（只读）`)) {
+          unpin(instance.id); // 清残留置顶,归档后置顶不撑空行
           void archiveInstance(instance.id).then(refresh);
         }
       },
@@ -75,6 +81,7 @@ export function InstanceItem({ instance }: { instance: Instance }) {
       danger: true,
       onClick: () => {
         if (window.confirm(`删除实例 ${instance.label}？临时记录删除,已归档的记录保留`)) {
+          unpin(instance.id); // 实例没了,置顶同步清掉
           void (async () => {
             await stopInstance(instance.id, true); // purge 已删临时记录;归档保留
             // 正在看的会话被删 → 关闭聊天回首页
@@ -107,15 +114,16 @@ export function InstanceItem({ instance }: { instance: Instance }) {
           className={`ii-pin ${pinned ? 'on' : ''}`}
           onClick={(e) => {
             e.stopPropagation();
-            togglePin(instance.label);
+            togglePin(instance.id);
           }}
           title={pinned ? '取消置顶' : '置顶'}
         >
           {pinned ? '📍' : '📌'}
         </button>
         <span className="ii-kind">
-          {instance.agent_key || ''}
-          {instance.session_id ? ' · 会话' : ''}
+          #{instance.id}
+          {instance.agent_key ? ` · ${instance.agent_key}` : ''}
+          {instance.session_id ? ` · 会话 ${instance.session_id}` : ''}
         </span>
         <button
           className="ii-menu"

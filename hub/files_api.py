@@ -1,8 +1,14 @@
-"""文件浏览(侧栏「文件」块):在 FILE_ROOT 内浏览/上传/预览,免登录。
+"""文件浏览/上传/预览,免登录。路径统一用绝对路径(正斜杠)。
 
-路径越界防护:_within 校验。复用 hub/files.py 的 guess_type。
+两种模式:
+- 带 ?root=:收藏边界模式,path 必须在 boundary 内,不可越界。
+  root 相对 → FILE_ROOT 内;绝对 → 任意位置。
+- 不带 root:整机浏览,path 为空 = 此电脑(各盘)。
+
+越界防护:_resolve_boundary/_resolve_in 校验。复用 hub/files.py 的 guess_type。
 """
 import os
+import string
 from pathlib import Path
 
 from aiohttp import web
@@ -18,81 +24,104 @@ def _root() -> Path:
     return Path(FILE_ROOT).resolve()
 
 
-def _resolve(path: str) -> Path | None:
-    """把相对路径解析为根内绝对路径;越界返回 None。"""
-    if not path:
-        return _root()
-    p = Path(path)
-    cand = (p if p.is_absolute() else _root() / p).resolve()
-    try:
-        cand.relative_to(_root())
-    except ValueError:
-        return None
-    return cand
+def _norm(p: Path) -> str:
+    """路径转正斜杠(Windows 盘符友好)。"""
+    return str(p).replace("\\", "/")
 
 
 def _resolve_boundary(root: str) -> Path | None:
-    """解析 ?root= 参数(收藏根)为根内绝对路径;省略/为空 = FILE_ROOT。"""
+    """?root= 收藏边界。空 → FILE_ROOT;相对 → FILE_ROOT 内;绝对 → 任意路径。"""
     if not root:
         return _root()
     p = Path(root)
     cand = (p if p.is_absolute() else _root() / p).resolve()
-    try:
-        cand.relative_to(_root())
-    except ValueError:
-        return None
+    if not p.is_absolute():
+        try:
+            cand.relative_to(_root())
+        except ValueError:
+            return None
     return cand
 
 
-def _resolve_in(boundary: Path, path: str) -> Path | None:
-    """解析 path(相对 FILE_ROOT)到绝对路径;必须在 boundary 内,否则 None。"""
+def _resolve_in(boundary: Path | None, path: str) -> Path | None:
+    """解析 path(始终绝对路径;空 = boundary 本身,或此电脑)。boundary 非空时必须在界内。"""
     if not path:
         return boundary
     p = Path(path)
-    cand = (p if p.is_absolute() else _root() / p).resolve()
-    try:
-        cand.relative_to(_root())
-    except ValueError:
-        return None
-    try:
-        cand.relative_to(boundary)
-    except ValueError:
-        return None
+    cand = (p if p.is_absolute() else Path.cwd() / p).resolve()
+    if boundary is not None:
+        try:
+            cand.relative_to(boundary)
+        except ValueError:
+            return None
     return cand
 
 
-async def api_list(request):
-    """列目录。?path= 相对根路径,&root= 限定浏览边界(收藏根,不可越界)。"""
-    boundary = _resolve_boundary(request.query.get("root", ""))
-    if boundary is None:
-        return web.json_response({"error": "根越界"}, status=403)
-    cand = _resolve_in(boundary, request.query.get("path", ""))
-    if cand is None or not cand.is_dir():
-        return web.json_response({"error": "目录不存在或越界"}, status=404)
-    root = _root()
-    entries = []
-    for p in sorted(cand.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
+def _drive_entries() -> list[dict]:
+    out = []
+    for letter in string.ascii_uppercase:
+        p = Path(f"{letter}:\\")
+        try:
+            if p.exists():
+                out.append({"name": f"{letter}:", "path": f"{letter}:/",
+                            "dir": True, "size": None, "mtime": 0})
+        except OSError:
+            continue
+    return out
+
+
+def _iter_entries(base: Path) -> list[dict]:
+    out = []
+    for p in sorted(base.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
         try:
             st = p.stat()
         except OSError:
             continue
-        entries.append({
+        out.append({
             "name": p.name,
-            "path": str(p.relative_to(root)).replace("\\", "/"),
+            "path": _norm(p),
             "dir": p.is_dir(),
             "size": st.st_size if p.is_file() else None,
             "mtime": st.st_mtime,
         })
-    cur = "" if cand == root else str(cand.relative_to(root)).replace("\\", "/")
-    # 返回当前浏览边界(相对根),前端据此决定能否再往上走
-    root_rel = "" if boundary == _root() else str(boundary.relative_to(_root())).replace("\\", "/")
-    return web.json_response({"root": str(root), "path": cur, "boundary": root_rel, "entries": entries})
+    return out
+
+
+async def api_list(request):
+    """列目录。?path= 绝对路径,&root= 收藏边界(省略 = 整机浏览)。"""
+    root_present = "root" in request.query
+    boundary = _resolve_boundary(request.query.get("root", "")) if root_present else None
+    if root_present and boundary is None:
+        return web.json_response({"error": "根越界"}, status=403)
+
+    if boundary is None:
+        cand = _resolve_in(None, request.query.get("path", ""))
+        if cand is None:
+            return web.json_response({
+                "root": _norm(_root()), "path": "", "boundary": "",
+                "entries": _drive_entries(), "unbounded": True,
+            })
+        if not cand.is_dir():
+            return web.json_response({"error": "目录不存在"}, status=404)
+        return web.json_response({
+            "root": _norm(_root()), "path": _norm(cand), "boundary": "",
+            "entries": _iter_entries(cand), "unbounded": True,
+        })
+
+    cand = _resolve_in(boundary, request.query.get("path", ""))
+    if cand is None or not cand.is_dir():
+        return web.json_response({"error": "目录不存在或越界"}, status=404)
+    return web.json_response({
+        "root": _norm(_root()), "path": _norm(cand), "boundary": _norm(boundary),
+        "entries": _iter_entries(cand),
+    })
 
 
 async def api_upload(request):
-    """上传文件到根内。表单:path=目标目录(相对根), root=浏览边界, file=文件。"""
+    """上传文件。表单:path=目标目录(绝对), root=边界(省略 = 整机), file=文件。"""
     reader = await request.multipart()
     target_dir = ""
+    target_root_present = False
     target_root = ""
     file_part = None
     while True:
@@ -102,23 +131,22 @@ async def api_upload(request):
         if part.name == "path":
             target_dir = (await part.read()).decode("utf-8", errors="ignore")
         elif part.name == "root":
+            target_root_present = True
             target_root = (await part.read()).decode("utf-8", errors="ignore")
         elif part.name == "file":
             file_part = part
     if file_part is None:
         return web.json_response({"error": "缺少文件"}, status=400)
-    boundary = _resolve_boundary(target_root or "")
-    if boundary is None:
+
+    boundary = _resolve_boundary(target_root) if target_root_present else None
+    if target_root_present and boundary is None:
         return web.json_response({"error": "根越界"}, status=403)
     dir_cand = _resolve_in(boundary, target_dir or "")
     if dir_cand is None or not dir_cand.is_dir():
         return web.json_response({"error": "目标目录不存在或越界"}, status=400)
+
     filename = Path(file_part.filename or "upload").name  # 只取文件名,防路径注入
     dest = (dir_cand / filename).resolve()
-    try:
-        dest.relative_to(_root())
-    except ValueError:
-        return web.json_response({"error": "路径越界"}, status=403)
     try:
         with open(dest, "wb") as f:
             while True:
@@ -132,9 +160,10 @@ async def api_upload(request):
 
 
 async def api_file(request):
-    """预览/下载根内文件。?path= 相对根,&root= 限定边界。"""
-    boundary = _resolve_boundary(request.query.get("root", ""))
-    if boundary is None:
+    """预览/下载文件。?path= 绝对路径,&root= 边界(省略 = 整机)。"""
+    root_present = "root" in request.query
+    boundary = _resolve_boundary(request.query.get("root", "")) if root_present else None
+    if root_present and boundary is None:
         raise web.HTTPForbidden(text="根越界")
     cand = _resolve_in(boundary, request.query.get("path", ""))
     if cand is None or not cand.is_file():

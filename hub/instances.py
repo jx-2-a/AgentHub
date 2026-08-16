@@ -17,7 +17,7 @@ _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 class Instance:
-    def __init__(self, inst_id, agent_key, label):
+    def __init__(self, inst_id, agent_key, label, fresh=True):
         self.id = inst_id
         self.agent_key = agent_key
         self.label = label
@@ -29,6 +29,7 @@ class Instance:
         self.error = None
         self.log_path = None
         self.resume_sid = None           # 重启时续接的旧会话(agent 需接受 --resume)
+        self.fresh = fresh               # True=用户新建(不续接旧会话);False=重启恢复(可续接)
 
     def to_dict(self):
         return {
@@ -62,7 +63,7 @@ class InstanceManager:
 
     def _save_active(self):
         try:
-            active = [{"agent_key": i.agent_key, "label": i.label}
+            active = [{"id": i.id, "agent_key": i.agent_key, "label": i.label}
                       for i in self._instances.values()
                       if i.status in ("starting", "connected")]
             self._active_file.write_text(
@@ -71,7 +72,7 @@ class InstanceManager:
             pass
 
     def restore(self):
-        """Hub 启动时重新拉起上次在跑的实例（agent 重连后记录仍在，可回看）。"""
+        """Hub 启动时重新拉起上次在跑的实例（保留实例 id → 会话能按 id 续接）。"""
         try:
             if not self._active_file.exists():
                 return
@@ -80,7 +81,8 @@ class InstanceManager:
             return
         for entry in active:
             try:
-                self.spawn(entry.get("agent_key", ""), entry.get("label", ""))
+                self.spawn(entry.get("agent_key", ""), entry.get("label", ""),
+                           inst_id=entry.get("id"), fresh=False)   # 重启恢复:允许续接
             except Exception:
                 pass
 
@@ -92,14 +94,17 @@ class InstanceManager:
         with self._lock:
             return self._instances.get(inst_id)
 
-    def spawn(self, agent_key, label=None):
+    def spawn(self, agent_key, label=None, inst_id=None, fresh=True):
         agent = agents_mod.load_agents().get(agent_key)
         if not agent:
             raise KeyError(f"未知 agent: {agent_key}")
         with self._lock:
-            self._counter += 1
-            inst_id = str(self._counter)
-        inst = Instance(inst_id, agent_key, label or agent["label_default"])
+            if inst_id is None:
+                self._counter += 1
+                inst_id = str(self._counter)
+            else:
+                self._counter = max(self._counter, int(inst_id) if inst_id.isdigit() else 0)
+        inst = Instance(inst_id, agent_key, label or agent["label_default"], fresh=fresh)
         self._instances[inst_id] = inst
         self._launch(inst, agent)
         return inst
@@ -116,6 +121,7 @@ class InstanceManager:
         old_sid = inst.session_id
         self.stop(inst_id)
         inst.resume_sid = old_sid if (resume and old_sid) else None
+        inst.fresh = not resume          # 重启不带续接 → 当作新建(不接旧会话)
         inst.pid = None
         inst.proc = None
         inst.status = "starting"
@@ -136,12 +142,15 @@ class InstanceManager:
                "--hub", f"ws://127.0.0.1:{self._port}/ws/agent",
                "--label", inst.label,
                "--file-root", agent["file_root"]]
-        if inst.resume_sid:
-            cmd += ["--resume", inst.resume_sid]
+        # 注意:agent 的 loop 不接受 --resume(argparse 会崩),续接走它自己的 agent_state.json
+        # (注册时带 resume_sid) + hub 的 by_instance/fresh 逻辑,这里不再传。
         env = dict(os.environ)
         for k, v in agent["env"].items():
             env[k] = v if v != "." else agent["cwd"]
         env["AGENT_HUB_INSTANCE"] = inst.id
+        if inst.fresh:
+            # 新实例(用户新建/无续接重启):告诉 agent 清掉自己存的旧上下文/旧实验
+            env["AGENT_HUB_FRESH"] = "1"
 
         inst.log_path = self._log_dir / f"{inst.id}.log"
         try:
@@ -186,6 +195,7 @@ class InstanceManager:
             if inst:
                 inst.session_id = session_id
                 inst.status = "connected"
+                inst.fresh = False   # 首次会话已建立,后续重连/重启都续接原会话
                 self._by_session[session_id] = inst_id
 
     def update_label(self, inst_id, label):

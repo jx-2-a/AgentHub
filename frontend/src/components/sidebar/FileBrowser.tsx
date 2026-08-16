@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useFileTreeStore } from '../../stores/fileTreeStore';
 import { useUiStore } from '../../stores/uiStore';
-import { favName, fileUrl } from '../../utils/files';
+import { favName, favParts, fileUrl } from '../../utils/files';
 
 interface Entry {
   name: string;
@@ -20,7 +20,7 @@ function fmtSize(n: number | null): string {
   return `${(n / 1024 / 1024).toFixed(1)}M`;
 }
 
-/** 侧栏「文件」树:根 = 收藏。收藏根视图列收藏文件夹,进入后钻目录,向上回收藏根。 */
+/** 侧栏文件树:根 = 收藏(绝对路径)。收藏根视图列收藏,进入后钻目录,向上回收藏根。 */
 export function FileBrowser() {
   const path = useFileTreeStore((s) => s.path);
   const boundary = useFileTreeStore((s) => s.boundary);
@@ -29,8 +29,21 @@ export function FileBrowser() {
   const toRoot = useFileTreeStore((s) => s.toRoot);
   const favs = useUiStore((s) => s.favorites);
   const removeFavorite = useUiStore((s) => s.removeFavorite);
+  const normalizeFavorites = useUiStore((s) => s.normalizeFavorites);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [error, setError] = useState<string | null>(null);
+
+  // 拿 FILE_ROOT,把旧的相对收藏归一化成绝对路径
+  useEffect(() => {
+    fetch('/api/files?path=')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.root) normalizeFavorites(d.root);
+      })
+      .catch(() => {
+        /* noop */
+      });
+  }, [normalizeFavorites]);
 
   const refresh = useCallback(async (p: string) => {
     if (!p) return; // 收藏根视图,不发请求
@@ -73,23 +86,27 @@ export function FileBrowser() {
           <div className="fb-empty">暂无收藏</div>
         ) : (
           <div className="fb-list">
-            {favs.map((p) => (
-              <div key={p} className="fb-item" onClick={() => enter(p)} title={`进入 ${favName(p)}`}>
-                <span className="fb-icon">📁</span>
-                <span className="fb-name">{favName(p)}</span>
-                <button
-                  className="fb-del"
-                  title="取消收藏"
-                  aria-label="取消收藏"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    removeFavorite(p);
-                  }}
-                >
-                  ✕
-                </button>
-              </div>
-            ))}
+            {favs.map((p) => {
+              const { name, parent } = favParts(p);
+              return (
+                <div key={p} className="fb-item" onClick={() => enter(p)} title={p}>
+                  <span className="fb-icon">📁</span>
+                  <span className="fb-name">{name}</span>
+                  {parent && <span className="fb-parent">{parent}</span>}
+                  <button
+                    className="fb-del"
+                    title="取消收藏"
+                    aria-label="取消收藏"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeFavorite(p);
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

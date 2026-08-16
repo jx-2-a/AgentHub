@@ -67,6 +67,7 @@ export function useChatConnection(sid: string | null): void {
         if (gen !== genRef.current) return;
         clearSocket();
         const st = useChatStore.getState();
+        st.finalizeBuffers(); // 把开着的思考/回复收成闭合,不留"思考中…"/光标
         st.setConnection('reconnecting');
         st.setStatus(opened ? '已断开，重连中…' : '会话不存在或已归档');
         st.setNotFound(!opened);

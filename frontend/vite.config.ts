@@ -17,6 +17,7 @@ export default defineConfig(({ command }) => ({
       '/file': 'http://127.0.0.1:8500',
       '/theme': 'http://127.0.0.1:8500',
       '/ws': { target: 'ws://127.0.0.1:8500', ws: true },
+      '/term/ws': { target: 'ws://127.0.0.1:8500', ws: true },
     },
   },
 }));

@@ -1,6 +1,6 @@
 /** 主题持久化与应用。沿用现状 localStorage 键 hub_theme。 */
-export type ThemeKind = 'light' | 'dark' | 'green';
-export type AccentKind = 'blue' | 'purple' | 'red' | 'amber';
+export type ThemeKind = 'light' | 'dark' | 'green' | 'sepia' | 'ocean';
+export type AccentKind = 'blue' | 'purple' | 'red' | 'amber' | 'cyan' | 'pink' | 'orange';
 
 export interface HubTheme {
   theme: ThemeKind;
@@ -8,9 +8,26 @@ export interface HubTheme {
   bg?: string;
 }
 
+export const THEME_NAMES: Record<ThemeKind, string> = {
+  light: '明亮',
+  dark: '暗黑',
+  green: '墨绿',
+  sepia: '暖纸',
+  ocean: '深海',
+};
+export const ACCENT_NAMES: Record<AccentKind, string> = {
+  blue: '蓝',
+  purple: '紫',
+  red: '红',
+  amber: '琥珀',
+  cyan: '青',
+  pink: '粉',
+  orange: '橙',
+};
+
 const KEY = 'hub_theme';
-const THEMES: ThemeKind[] = ['light', 'dark', 'green'];
-const ACCENTS: AccentKind[] = ['blue', 'purple', 'red', 'amber'];
+const THEMES: ThemeKind[] = ['light', 'dark', 'green', 'sepia', 'ocean'];
+const ACCENTS: AccentKind[] = ['blue', 'purple', 'red', 'amber', 'cyan', 'pink', 'orange'];
 
 function isTheme(v: unknown): v is ThemeKind {
   return typeof v === 'string' && (THEMES as string[]).includes(v);

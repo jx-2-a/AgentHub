@@ -18,7 +18,8 @@ from .notify import send as _notify_send
 # requirement 可重放:刷新后"系统询问"琥珀气泡不消失
 # settings 不走重放,而是独立快照(last_settings)每次连入都发 → 设置面板永远有参数
 _REPLAYABLE = {"log", "user", "assistant_delta", "assistant_final", "assistant_end",
-               "status", "tool_start", "tool_end", "session_end", "session_state",
+               "thinking_delta", "thinking_end", "status", "tool_start", "tool_end",
+               "session_end", "session_state",
                "requirement", "requirement_done"}
 
 
@@ -171,6 +172,7 @@ async def serve_agent(session, hub):
                             hub.instances.update_label(session.instance_id, ev["label"])
                     if ev.get("project_root"):
                         session.project_root = ev["project_root"]
+                    hub.registry.persist()   # 实验路径等元数据落盘 → 重启后不丢
                 if ev.get("type") == "session_end":
                     session.status = "exited"
                 broadcast(session, ev)

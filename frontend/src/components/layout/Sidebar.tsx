@@ -18,8 +18,16 @@ export function Sidebar() {
   const closeSidebar = useUiStore((s) => s.closeSidebar);
   const openStart = useUiStore((s) => s.openStart);
   const openSettings = useUiStore((s) => s.openSettings);
+  const pinned = useUiStore((s) => s.pinned);
+  const pinnedArchives = useUiStore((s) => s.pinnedArchives);
   const error = useHubStore((s) => s.error);
   const instances = useHubStore((s) => s.instances);
+  const archived = useHubStore((s) => s.archived);
+
+  // 置顶只在确实有「置顶的实例或归档」时显示;残留的置顶 label(实例已删)不撑空行
+  const hasPinned =
+    instances.some((i) => pinned.includes(i.id)) ||
+    archived.some((a) => pinnedArchives.includes(a.sid));
 
   // 断点切换时:桌面展开,移动端收起
   useEffect(() => {
@@ -62,14 +70,16 @@ export function Sidebar() {
         </button>
 
         <section className="sidebar-section">
-          <div className="section-title">文件</div>
           <FileBrowser />
         </section>
 
-        <section className="sidebar-section">
-          <div className="section-title">置顶</div>
-          <InstanceList pinnedOnly />
-        </section>
+        {hasPinned ? (
+          <section className="sidebar-section">
+            <div className="section-title">置顶</div>
+            <InstanceList pinnedOnly />
+            <ArchivedList pinnedOnly />
+          </section>
+        ) : null}
 
         <section className="sidebar-section">
           <div className="section-title">实例</div>

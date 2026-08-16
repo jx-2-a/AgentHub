@@ -92,6 +92,8 @@ export function MessageItems({
   const { ref, follow, scrollToBottom } = useFollowScroll<HTMLDivElement>();
   const itemCount = items.length;
   const grouped = useMemo(() => groupItems(items), [items]);
+  const thinkingExpanded = useUiStore((s) => s.thinkingExpanded);
+  const setThinkingExpanded = useUiStore((s) => s.setThinkingExpanded);
 
   useEffect(() => {
     if (followLive && follow) scrollToBottom();
@@ -106,8 +108,15 @@ export function MessageItems({
           <MessageItem key={`m${i}`} item={g} sid={sid} />
         ),
       )}
-      {thinkingOpen && <ThinkingBlock text={thinkingBuffer} closed={false} />}
-      {assistantOpen && <AssistantBubble text={assistantBuffer} md={null} sid={sid} />}
+      {thinkingOpen && (
+        <ThinkingBlock
+          text={thinkingBuffer}
+          closed={false}
+          expanded={thinkingExpanded}
+          onToggle={setThinkingExpanded}
+        />
+      )}
+      {assistantOpen && <AssistantBubble text={assistantBuffer} md={null} open sid={sid} />}
     </div>
   );
 }

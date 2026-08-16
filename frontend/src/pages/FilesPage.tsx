@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { IconBack } from '../components/common/icons';
 import { useUiStore } from '../stores/uiStore';
@@ -21,10 +21,14 @@ function fmtSize(n: number | null): string {
   return `${(n / 1024 / 1024).toFixed(1)}M`;
 }
 
-/** /files:大文件页。root=收藏目录边界,不可越过;列表/预览/下载/上传/收藏。 */
+/**
+ * /files:文件大页。路径一律绝对。
+ * 无 ?root= → 整机浏览(此电脑 → 各盘);带 ?root= → 收藏边界,不可越界。
+ * 顶部 ⭐ 收藏当前目录(任意位置);列表里不再放逐目录星。
+ */
 export function FilesPage() {
   const [searchParams] = useSearchParams();
-  const boundary = searchParams.get('root') ?? ''; // 相对 FILE_ROOT,空 = 整根
+  const urlBoundary = searchParams.get('root'); // null = 整机;'' 或路径 = 收藏边界
   const navigate = useNavigate();
   const favs = useUiStore((s) => s.favorites);
   const addFavorite = useUiStore((s) => s.addFavorite);
@@ -33,16 +37,17 @@ export function FilesPage() {
 
   const [path, setPath] = useState('');
   const [entries, setEntries] = useState<Entry[]>([]);
+  const [boundary, setBoundary] = useState(urlBoundary ?? ''); // 绝对边界;'' = 整机/此电脑
+  const [unbounded, setUnbounded] = useState(urlBoundary === null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const refresh = useCallback(
     async (p: string) => {
       setBusy(true);
       try {
         const q = new URLSearchParams({ path: p });
-        if (boundary) q.set('root', boundary);
+        if (urlBoundary !== null) q.set('root', urlBoundary);
         const res = await fetch(`/api/files?${q.toString()}`);
         const data = await res.json();
         if (!res.ok) {
@@ -52,6 +57,8 @@ export function FilesPage() {
         }
         setPath(data.path || '');
         setEntries(data.entries || []);
+        setUnbounded(!!data.unbounded);
+        if (data.boundary !== undefined) setBoundary(data.boundary || '');
         setError(null);
       } catch (e) {
         setError(String(e));
@@ -59,46 +66,56 @@ export function FilesPage() {
         setBusy(false);
       }
     },
-    [boundary],
+    [urlBoundary],
   );
 
   useEffect(() => {
     void refresh('');
   }, [refresh]);
 
-  const atBoundary = path === boundary; // ''==='' 或 'Emisinver'==='Emisinver'
-  const curIsFav = favs.includes(path);
+  const atTop = unbounded ? path === '' : path === boundary;
 
-  // 面包屑:[边界根, ...path 在边界内的子段];边界根不可再往上
+  // 面包屑
   const crumbs: { name: string; path: string; root: boolean }[] = [];
-  crumbs.push({ name: boundary ? favName(boundary) : '文件库', path: boundary, root: true });
-  let sub = '';
-  if (!boundary) sub = path;
-  else if (path === boundary) sub = '';
-  else if (path.startsWith(boundary + '/')) sub = path.slice(boundary.length + 1);
-  const subParts = sub.split('/').filter(Boolean);
-  subParts.forEach((s, i) => {
-    const joined = subParts.slice(0, i + 1).join('/');
-    crumbs.push({ name: s, path: boundary ? `${boundary}/${joined}` : joined, root: false });
-  });
+  if (unbounded) {
+    crumbs.push({ name: '此电脑', path: '', root: true });
+    const parts = path.split('/').filter(Boolean);
+    parts.forEach((s, i) => {
+      crumbs.push({ name: s, path: parts.slice(0, i + 1).join('/'), root: false });
+    });
+  } else {
+    crumbs.push({ name: boundary ? favName(boundary) : '文件库', path: boundary, root: true });
+    let rel = '';
+    if (boundary) {
+      if (path === boundary) rel = '';
+      else if (path.startsWith(boundary + '/')) rel = path.slice(boundary.length + 1);
+    }
+    const relParts = rel.split('/').filter(Boolean);
+    relParts.forEach((s, i) => {
+      const joined = relParts.slice(0, i + 1).join('/');
+      crumbs.push({ name: s, path: `${boundary}/${joined}`, root: false });
+    });
+  }
 
   const goUp = () => {
-    if (atBoundary) return;
+    if (atTop) return;
     const parts = path.split('/');
     parts.pop();
     void refresh(parts.join('/'));
   };
 
-  const toggleFav = (p: string) => {
-    if (favs.includes(p)) removeFavorite(p);
-    else addFavorite(p);
+  // 顶部收藏星:收藏当前目录(任意位置都可以收藏)
+  const curIsFav = favs.includes(path);
+  const toggleCur = () => {
+    if (curIsFav) removeFavorite(path);
+    else addFavorite(path);
   };
 
   const onUpload = async (f: File | undefined) => {
     if (!f) return;
     const fd = new FormData();
     fd.append('path', path);
-    if (boundary) fd.append('root', boundary);
+    if (urlBoundary !== null) fd.append('root', urlBoundary);
     fd.append('file', f);
     try {
       await fetch('/api/files/upload', { method: 'POST', body: fd });
@@ -115,7 +132,7 @@ export function FilesPage() {
     }
     const ext = e.name.split('.').pop()?.toLowerCase() ?? '';
     openFile({
-      url: fileUrl(e.path, boundary),
+      url: fileUrl(e.path, unbounded ? undefined : boundary || undefined),
       name: e.name,
       kind: IMG_EXT.includes(ext) ? 'image' : 'doc',
     });
@@ -129,13 +146,18 @@ export function FilesPage() {
         </button>
         <div id="chat-title">文件管理</div>
         <div id="chat-status">
-          {atBoundary && boundary ? `🔒 ${favName(boundary)}` : rootName(boundary)}
-          {!atBoundary && path ? ` · ${favName(path)}` : ''}
+          {unbounded
+            ? path
+              ? favName(path)
+              : '此电脑 · 整机'
+            : atTop && boundary
+              ? `🔒 ${favName(boundary)}`
+              : crumbs[0]?.name || '文件库'}
         </div>
         <div id="chat-actions">
           <button
             className={`icon-btn fav-star${curIsFav ? ' on' : ''}`}
-            onClick={() => toggleFav(path)}
+            onClick={toggleCur}
             title={curIsFav ? '取消收藏当前目录' : '收藏当前目录'}
           >
             {curIsFav ? '★' : '☆'}
@@ -151,24 +173,22 @@ export function FilesPage() {
               <span
                 className={`fb-crumb${c.root ? ' root' : ''}`}
                 onClick={() => {
-                  if (!(c.root && atBoundary)) void refresh(c.path);
+                  if (!(c.root && atTop)) void refresh(c.path);
                 }}
               >
-                {c.root && !boundary ? '📁 ' : ''}
                 {c.name}
               </span>
             </span>
           ))}
         </div>
         <div className="files-actions">
-          <button className="btn-ghost" onClick={goUp} disabled={atBoundary} title="上一级">
+          <button className="btn-ghost" onClick={goUp} disabled={atTop} title="上一级">
             ↑ 上级
           </button>
           <label className="file-picker" title="上传文件到当前目录">
             ⬆ 上传
             <input
               type="file"
-              ref={fileInputRef}
               hidden
               onChange={(e) => {
                 void onUpload(e.target.files?.[0]);
@@ -189,22 +209,10 @@ export function FilesPage() {
             <span className="files-icon">{e.dir ? '📁' : '📄'}</span>
             <span className="files-name">{e.name}</span>
             <span className="files-meta">{e.dir ? '' : fmtSize(e.size)}</span>
-            {e.dir && (
-              <button
-                className={`files-fav${favs.includes(e.path) ? ' on' : ''}`}
-                onClick={(ev) => {
-                  ev.stopPropagation();
-                  toggleFav(e.path);
-                }}
-                title={favs.includes(e.path) ? '取消收藏' : '收藏此目录'}
-              >
-                {favs.includes(e.path) ? '★' : '☆'}
-              </button>
-            )}
             {!e.dir && (
               <a
                 className="files-dl"
-                href={fileUrl(e.path, boundary, true)}
+                href={fileUrl(e.path, unbounded ? undefined : boundary || undefined, true)}
                 onClick={(ev) => ev.stopPropagation()}
                 title="下载"
               >
@@ -213,12 +221,8 @@ export function FilesPage() {
             )}
           </div>
         ))}
-        {!busy && entries.length === 0 && <div className="fb-empty files-empty">（空目录）</div>}
+        {!busy && entries.length === 0 && <div className="fb-empty files-empty">（空）</div>}
       </div>
     </div>
   );
-}
-
-function rootName(boundary: string): string {
-  return boundary ? favName(boundary) : '文件库';
 }

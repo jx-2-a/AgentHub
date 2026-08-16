@@ -1,10 +1,22 @@
 /** 文件相关小工具:收藏显示名、预览/下载 URL(带 root 边界)。 */
 
+/** 是否绝对路径(Windows 盘符或 / 开头)。 */
+export function isAbsPath(p: string): boolean {
+  return /^[A-Za-z]:/.test(p) || p.startsWith('/');
+}
+
 /** 收藏/路径显示名:空路径 → 文件库(整根),否则取最后一段。 */
 export function favName(path: string): string {
   if (!path) return '文件库';
   const seg = path.split('/').filter(Boolean);
   return seg[seg.length - 1];
+}
+
+/** 收藏显示拆分:名字 + 父路径(用于同名收藏的区分)。 */
+export function favParts(path: string): { name: string; parent: string } {
+  if (!path) return { name: '文件库', parent: '' };
+  const seg = path.split('/').filter(Boolean);
+  return { name: seg[seg.length - 1], parent: seg.slice(0, -1).join('/') };
 }
 
 /** 预览/下载 URL。root 为浏览边界(收藏根),download=1 强制附件下载。 */

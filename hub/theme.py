@@ -47,6 +47,32 @@ PRESETS = {
             "--border": "#2b4636",
         },
     },
+    "sepia": {
+        "name": "暖纸",
+        "vars": {
+            "--bg": "#f7f2e7",
+            "--bg-soft": "#efe7d6",
+            "--fg": "#3f3a30",
+            "--fg-dim": "#8a8170",
+            "--accent": "#b0773c",
+            "--bubble-user": "#e6d8bd",
+            "--bubble-agent": "#efe7d6",
+            "--border": "#d9cdb3",
+        },
+    },
+    "ocean": {
+        "name": "深海",
+        "vars": {
+            "--bg": "#0a1e2a",
+            "--bg-soft": "#102a38",
+            "--fg": "#dceff7",
+            "--fg-dim": "#6f93a5",
+            "--accent": "#2aa9d4",
+            "--bubble-user": "#123c52",
+            "--bubble-agent": "#102a38",
+            "--border": "#1d3d4d",
+        },
+    },
 }
 
 

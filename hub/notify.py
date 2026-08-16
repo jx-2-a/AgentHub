@@ -20,9 +20,31 @@ GOTIFY_TOKEN = os.environ.get("GOTIFY_TOKEN", "").strip()
 TEMPLATE = os.environ.get("NOTIFY_URL_TEMPLATE", "").strip()
 HUB_URL = os.environ.get("HUB_PUBLIC_URL", "").rstrip("/")
 
+# 用户开关:None=跟随配置(配置了才推);True/False=强制开/关(持久化在 data/settings.json)
+_enabled_override: bool | None = None
+
+
+def set_enabled(on: bool):
+    global _enabled_override
+    _enabled_override = bool(on)
+
 
 def is_enabled() -> bool:
+    if _enabled_override is not None:
+        return _enabled_override
+    return is_configured()
+
+
+def is_configured() -> bool:
     return bool((GOTIFY_URL and GOTIFY_TOKEN) or TEMPLATE)
+
+
+def mode() -> str:
+    if GOTIFY_URL and GOTIFY_TOKEN:
+        return "gotify"
+    if TEMPLATE:
+        return "template"
+    return "none"
 
 
 def send(title: str, content: str = "", url: str | None = None, priority: int = 8) -> None:

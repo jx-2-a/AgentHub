@@ -6,7 +6,7 @@ import { useUiStore, type TermConn } from '../stores/uiStore';
 
 const STATUS_TEXT: Record<TermConn, string> = {
   connecting: '连接中…',
-  connected: '系统 Shell · 输入 exit 退出',
+  connected: '系统 Shell · ← 退出',
   closed: '已断开,自动重连中…',
 };
 

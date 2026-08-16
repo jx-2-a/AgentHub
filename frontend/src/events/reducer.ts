@@ -26,13 +26,31 @@ function flushThinking(s: ChatState): {
 
 export function reduceChat(s: ChatState, ev: ServerEvent): ChatState {
   switch (ev.type) {
-    case 'session_state':
-      // 断线/结束时清掉挂起的交互(否则 require/ask 弹窗永远关不掉,窗口冻住)
+    case 'session_state': {
+      if (ev.status === 'connected') {
+        return { ...s, status: '' };
+      }
+      // 断线/结束时:收掉开着的思考/回复块(agent 被杀/重启时 thinking_end 可能没到,
+      // 否则思考块一直"思考中…"卡住),并清掉挂起的交互(否则弹窗关不掉)
+      let messages = s.messages;
+      if (s.thinkingOpen) {
+        messages = [...messages, { kind: 'thinking', text: s.thinkingBuffer, closed: true }];
+      }
+      if (s.assistantOpen) {
+        messages = [...messages, { kind: 'assistant', text: s.assistantBuffer, md: null }];
+      }
       return {
         ...s,
-        status: ev.status === 'connected' ? '' : `会话 ${ev.status}`,
-        ...(ev.status !== 'connected' ? { pendingAsk: null, pendingRequirement: null } : {}),
+        status: `会话 ${ev.status}`,
+        messages,
+        thinkingOpen: false,
+        thinkingBuffer: '',
+        assistantOpen: false,
+        assistantBuffer: '',
+        pendingAsk: null,
+        pendingRequirement: null,
       };
+    }
 
     case 'log': {
       // silent:只落转录记录、不上聊天屏(前端直接忽略)

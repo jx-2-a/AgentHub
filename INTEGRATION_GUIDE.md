@@ -40,6 +40,7 @@ print / input**，全部换成：
 |---|---|---|
 | `print("普通信息")` | `_session.render(text)` 或 `_session.log(text)` | info 气泡 |
 | 横幅 / 启动信息 / 提示 | `_session.log(text, "welcome"\|"choice"\|"hint")` | 对应样式气泡 |
+| **重要汇报**（配置改动/进度总结/需用户关注） | `_session.log(text, "important")` | **带框+底色+markdown**（可放表格/代码块） |
 | 状态行（思考中/倒计时） | `_session.set_status(text)` | 顶部状态行 |
 | 流式输出 | `_session.stream_delta(t)` … `_session.stream_end(md)` | Markdown 渲染 |
 | 思考链（DeepSeek reasoning） | `_session.thinking_delta(t)` … `_session.thinking_end()` | **可折叠思考块** |

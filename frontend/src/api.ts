@@ -70,6 +70,18 @@ export async function trimSession(sid: string, keep: number): Promise<void> {
   });
 }
 
+/** 分页拉更早历史:before = 当前窗口起点(干净切点行号),返回之前一页(纯展示事件)。
+ * nextBefore = 下一页游标;hasMore=false 表示已到最早。 */
+export async function getOlderEvents(
+  sid: string,
+  before: number,
+  limit = 300,
+): Promise<{ events: ServerEvent[]; nextBefore: number | null; hasMore: boolean }> {
+  const r = await fetch(`/api/sessions/${sid}/history?before=${before}&limit=${limit}`);
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  return r.json() as Promise<{ events: ServerEvent[]; nextBefore: number | null; hasMore: boolean }>;
+}
+
 export async function uploadBackground(file: Blob, filename: string): Promise<string> {
   const fd = new FormData();
   fd.append('file', file, filename);

@@ -20,13 +20,21 @@ class TranscriptStore:
             pass
 
     def read(self, sid):
+        return self.read_range(sid, 0, -1)
+
+    def read_range(self, sid, start, end):
+        """只读转录 [start,end) 行（游标分页用，不整读大文件）。end<0 表示读到末尾。"""
         p = self.path_for(sid)
         if not p.exists():
             return []
         events = []
         try:
             with open(p, encoding="utf-8") as f:
-                for line in f:
+                for idx, line in enumerate(f):
+                    if end >= 0 and idx >= end:
+                        break
+                    if idx < start:
+                        continue
                     line = line.strip()
                     if not line:
                         continue

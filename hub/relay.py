@@ -22,15 +22,26 @@ _REPLAYABLE = {"log", "user", "assistant_delta", "assistant_final", "assistant_e
                "session_end", "session_state",
                "requirement", "requirement_done"}
 
+# 分页历史只取「纯展示」事件:排除 ask/requirement/settings/sleep 等交互类
+# （旧页里出现它们会误弹旧弹窗/旧设置;requirement 琥珀气泡在懒加载旧页不显示,v1 接受）。
+# meta 是会话登记的书签行,不进分页（标题由实例 label 提供）。
+_DISPLAY_ONLY = {"log", "user", "assistant_delta", "assistant_final", "assistant_end",
+                 "thinking_delta", "thinking_end", "status", "tool_start", "tool_end",
+                 "file", "session_end"}
+
+# 重放窗口:最多给最近的这么多条事件,更早的由前端上滑分页拉取
+_TAIL_EVENTS = 300
+
 
 
 class Viewer:
-    """一个浏览器 viewer：独立出站队列 + send task。"""
+    """一个浏览器 viewer：独立出站队列 + send task + 历史重放投喂 task。"""
 
-    def __init__(self, ws, queue_size=500):
+    def __init__(self, ws, queue_size=2048):
         self.ws = ws
         self.q = asyncio.Queue(maxsize=queue_size)
-        self.task = None
+        self.task = None   # send_loop：队列 → socket
+        self.feed = None   # 历史重放投喂：history → 队列（阻塞式，不丢事件）
 
     async def send_loop(self):
         try:
@@ -68,42 +79,87 @@ def broadcast(session, event):
             asyncio.ensure_future(v.ws.close())
 
 
-async def attach_viewer(session, ws):
-    """挂一个浏览器 viewer，先重放历史再实时推送。返回 Viewer。
+async def attach_viewer(session, ws, transcripts=None):
+    """挂一个浏览器 viewer，重放「尾部窗口」历史再实时推送。返回 Viewer。
 
     竞态防护：history + 挂起交互（ask/sleep）在「加入 viewers 之前」快照——
     否则若 agent 恰在连入窗口发出该事件，会同时被「实时广播」+「重放」各投一次
     （前端看到同一 requirement 出现两次）。
     requirement 已在 _REPLAYABLE（历史覆盖，刷新后琥珀气泡不消失），无需再走 last_requirement 补发。
+    重放只发最近 _TAIL_EVENTS 条（从最近一个干净切点起）：更早历史由前端上滑分页拉取，
+    避免每次重连都灌几千条。窗口从转录按行号读取（meta 书签行会被 _REPLAYABLE 滤掉）。
     """
     v = Viewer(ws)
     v.task = asyncio.create_task(v.send_loop())
-    history = list(session.history)
     last_ask = session.last_ask
     last_sleep = session.last_sleep
     last_settings = session.last_settings
+    # 窗口起点:≤ max(0, stream_len-_TAIL_EVENTS) 的最大干净切点(找不到就 0)
+    target = max(0, session.stream_len - _TAIL_EVENTS)
+    start = 0
+    for p in session.clean_points:
+        if p <= target:
+            start = p
+        else:
+            break
+    if transcripts is not None and session.stream_len > start:
+        window = transcripts.read_range(session.sid, start, session.stream_len)
+    else:
+        # 兜底:无转录 store 时退到内存历史(仅事件,无 meta 行)
+        history = list(session.history)
+        window = history[-(session.stream_len - start):] if session.stream_len > start else []
+    # 未读锚点:上次看到位置(read_pos)落在窗口内 → 在对应事件前插 read_marker
+    marker_at = None
+    rp = session.read_pos or 0
+    if start < rp < session.stream_len:
+        marker_at = rp - start
     session.viewers.add(v)
-    # 重放历史（含 requirement/requirement_done 等可重放事件；先发一个会话状态）
-    await _safe_put(v.q, {"type": "session_state", "status": session.status})
-    for ev in history:
-        if ev.get("type") in _REPLAYABLE:
-            await _safe_put(v.q, ev)
-    # pending ask / sleep 不在 _REPLAYABLE → 快照补发（中途加入也能应答）
-    if last_ask and session.agent_ws is not None:
-        await _safe_put(v.q, last_ask)
-    if last_sleep and session.agent_ws is not None:
-        await _safe_put(v.q, last_sleep)
-    # 设置参数快照:任何 viewer 连入都发 → 设置面板永远有参数,不被消息流顶掉
-    if last_settings:
-        await _safe_put(v.q, last_settings)
+    v.feed = asyncio.create_task(
+        _replay_history(v, session, window, marker_at, start, last_ask, last_sleep, last_settings))
     return v
 
 
-async def _safe_put(q, ev):
+async def _replay_history(v, session, window, marker_at, start, last_ask, last_sleep, last_settings):
+    """把尾部窗口 + 挂起交互阻塞式送入 viewer 队列，绝不丢事件（socket 慢则自然背压）。
+    窗口结束补发 replay_done（带分页游标）→ 前端据此锚滚动并得知能否上滑加载更早。"""
     try:
-        q.put_nowait(ev)
-    except asyncio.QueueFull:
+        if not await _put(v, {"type": "session_state", "status": session.status}):
+            return
+        for i, ev in enumerate(window):
+            if marker_at is not None and i == marker_at:
+                if not await _put(v, {"type": "read_marker", "text": "上次看到这里"}):
+                    return
+            if ev.get("type") in _REPLAYABLE and not await _put(v, ev):
+                return
+        # pending ask / sleep 不在 _REPLAYABLE → 快照补发（中途加入也能应答）
+        if last_ask and session.agent_ws is not None:
+            await _put(v, last_ask)
+        if last_sleep and session.agent_ws is not None:
+            await _put(v, last_sleep)
+        # 设置参数快照:任何 viewer 连入都发 → 设置面板永远有参数,不被消息流顶掉
+        if last_settings:
+            await _put(v, last_settings)
+        # 重放完成 + 分页游标:前端锚滚动,hasMore 决定是否还能上滑加载更早
+        await _put(v, {
+            "type": "replay_done",
+            "hasMore": start > 0,
+            "nextBefore": start if start > 0 else None,
+        })
+    except asyncio.CancelledError:
+        raise
+    except Exception:
         pass
+
+
+async def _put(v, ev):
+    """阻塞入队；viewer 已死或队列 30s 塞不进 → 放弃本轮重放（客户端会重连重试）。"""
+    if v.task.done() or v.ws.closed:
+        return False
+    try:
+        await asyncio.wait_for(v.q.put(ev), timeout=30)
+        return True
+    except asyncio.TimeoutError:
+        return False
 
 
 # 手机推送节流:每会话 30s 内最多一条,避免 agent 频繁 ask 刷屏
@@ -147,6 +203,7 @@ async def serve_agent(session, hub):
                     continue
                 session.touch()
                 session.history.append(ev)
+                session.mark_event(ev)   # 推进 stream_len + 维护干净切点
                 hub.transcripts.append(session.sid, ev)
                 if ev.get("type") == "ask":
                     session.last_ask = ev

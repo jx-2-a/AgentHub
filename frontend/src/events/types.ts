@@ -7,7 +7,8 @@ export type ChatItem =
   | { kind: 'assistant'; text: string; md: string | null } // md 在 assistant_final 时置为渲染用 markdown
   | { kind: 'thinking'; text: string; closed: boolean }
   | { kind: 'tool'; id: string; name: string; args?: unknown; status: 'running' | 'ok' | 'err'; summary?: string; error?: string }
-  | { kind: 'file'; path: string; caption?: string };
+  | { kind: 'file'; path: string; caption?: string }
+  | { kind: 'separator'; text: string }; // 「上次看到这里」未读分隔条(重放合成)
 
 export interface PendingAsk {
   id: string;
@@ -33,6 +34,7 @@ export interface ChatState {
   settings: FieldSpec[];
   pendingAsk: PendingAsk | null;
   pendingRequirement: PendingRequirement | null;
+  replayDone: boolean; // 初始重放窗口已完成(可锚滚动/可上滑分页)
 }
 
 export function initialChatState(): ChatState {
@@ -48,5 +50,6 @@ export function initialChatState(): ChatState {
     settings: [],
     pendingAsk: null,
     pendingRequirement: null,
+    replayDone: false,
   };
 }

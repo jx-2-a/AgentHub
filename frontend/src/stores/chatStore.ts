@@ -1,5 +1,6 @@
 /** 聊天 store:WS 事件流状态 + 发送 action(经 ws.ts 发送)。 */
 import { create } from 'zustand';
+import { getOlderEvents } from '../api';
 import type { ServerEvent } from '../types';
 import { reduceChat } from '../events/reducer';
 import { initialChatState, type ChatState } from '../events/types';
@@ -29,6 +30,9 @@ interface ChatStore extends ChatState {
   timer: { end: number; text: string } | null; // 定时/休眠倒计时(end = 绝对 epoch 秒)
   toast: string | null;
   pendingOutbox: string[]; // 断线期间发不出消息的待发队列,重连后补发(避免吞消息)
+  hasMore: boolean; // 还有更早历史可上滑分页拉取
+  olderCursor: number | null; // 当前窗口起点的转录行号(下一次 before=)
+  loadingOlder: boolean; // 正在拉取更早历史(防并发)
   reset(sid: string): void;
   applyEvent(ev: ServerEvent): void;
   setConnection(c: ConnectionState): void;
@@ -41,6 +45,8 @@ interface ChatStore extends ChatState {
   flushOutbox(): void;
   trimMessages(keep: number): void;
   finalizeBuffers(): void; // 断线时把开着的思考/回复块收成闭合,不留"思考中…"/光标
+  loadOlder(): Promise<void>; // 上滑到顶时拉更早一页,前插,保持滚动位置
+  reportRead(): void; // 贴底时上报"上次看到位置"
   sendMessage(text: string): void;
   sendAskAnswer(id: string, text: string | null): void;
   sendRequirementAnswer(id: string, values: Record<string, string> | null): void;
@@ -56,8 +62,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   timer: null,
   toast: null,
   pendingOutbox: [],
+  hasMore: false,
+  olderCursor: null,
+  loadingOlder: false,
 
-  // 服务器每次连接都重放完整历史 → 连接建立时清空重建(reconnect 也如此,避免重复)。
+  // 服务器每次连接都重放「尾部窗口」→ 连接建立时清空重建(reconnect 也如此,避免重复)。
   // title 保留:meta.label 不可重放,重连后标题应沿用。
   reset(sid) {
     set((s) => ({
@@ -68,6 +77,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       notFound: false,
       timer: null,
       toast: null,
+      hasMore: false,
+      olderCursor: null,
+      loadingOlder: false,
       ...(s.sid && s.sid !== sid ? { pendingOutbox: [] } : {}), // 切了会话,丢弃旧会话的待发队列
     }));
   },
@@ -79,6 +91,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }
     if (ev.type === 'sleep_end') {
       set({ timer: null });
+      return;
+    }
+    // 初始重放完成:取分页游标 + 置位(前端据此锚滚动)
+    if (ev.type === 'replay_done') {
+      set({ replayDone: true, hasMore: !!ev.hasMore, olderCursor: ev.nextBefore ?? null });
       return;
     }
     set(capMessages(reduceChat(get(), ev))); // 自动上限:防页面无限堆长
@@ -150,6 +167,39 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         assistantBuffer: '',
       };
     });
+  },
+
+  // 上滑到顶 → 拉更早一页,独立 reduce 后前插,保持滚动位置(由视图层负责 scrollTop 补偿)。
+  // 分页按「干净切点」切 → 每页自洽,无空窗、无半个思考/回复/工具块。
+  async loadOlder() {
+    const { sid, olderCursor, loadingOlder } = get();
+    if (!sid || olderCursor == null || loadingOlder) return;
+    set({ loadingOlder: true });
+    try {
+      const page = await getOlderEvents(sid, olderCursor, 300);
+      let ps = initialChatState();
+      for (const ev of page.events) ps = reduceChat(ps, ev);
+      set((s) => {
+        const k = ps.messages.length;
+        // 前插 K 条 → 现有 toolIndex(直播中工具)下标右移 K
+        const toolIndex: Record<string, number> = {};
+        for (const [id, idx] of Object.entries(s.toolIndex)) toolIndex[id] = idx + k;
+        return {
+          messages: [...ps.messages, ...s.messages],
+          toolIndex,
+          olderCursor: page.nextBefore,
+          hasMore: page.hasMore,
+          loadingOlder: false,
+        };
+      });
+    } catch {
+      set({ loadingOlder: false }); // 拉取失败:允许重试,不卡死
+    }
+  },
+
+  // 贴底时上报"上次看到位置"→ 服务端记 read_pos = stream_len;未读锚点据此插分隔条
+  reportRead() {
+    sendIfOpen({ type: 'read_pos' });
   },
 
   sendMessage(text) {

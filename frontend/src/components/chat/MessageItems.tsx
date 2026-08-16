@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import type { ChatItem } from '../../events/types';
 import { useFollowScroll } from '../../hooks/useFollowScroll';
 import { useUiStore } from '../../stores/uiStore';
@@ -11,6 +11,15 @@ import { UserBubble } from './messages/UserBubble';
 
 type ToolItem = Extract<ChatItem, { kind: 'tool' }>;
 type RenderedItem = ChatItem | { kind: '__group'; items: ToolItem[] };
+
+/** 瞬间滚动(绕过 #messages 的 scroll-behavior:smooth;锚点/分页补偿要一步到位)。 */
+function jumpTo(el: HTMLElement, top: number) {
+  el.style.scrollBehavior = 'auto';
+  el.scrollTop = top;
+  requestAnimationFrame(() => {
+    el.style.scrollBehavior = '';
+  });
+}
 
 /** 把连续的工具调用合成一个伸缩组(避免工具一多往上翻很久)。 */
 function groupItems(items: ChatItem[]): RenderedItem[] {
@@ -77,6 +86,12 @@ interface MessageItemsProps {
   assistantBuffer?: string;
   sid?: string | null;
   followLive?: boolean;
+  // 历史分页窗口(仅 live 聊天;转录回看不传)
+  hasMore?: boolean;
+  loadingOlder?: boolean;
+  onLoadOlder?: () => void;
+  replayDone?: boolean;
+  onReportRead?: () => void;
 }
 
 /** 通用消息流:既服务实时聊天(chatStore),也服务转录回看(本地 reducer 状态)。 */
@@ -88,19 +103,106 @@ export function MessageItems({
   assistantBuffer = '',
   sid,
   followLive = true,
+  hasMore = false,
+  loadingOlder = false,
+  onLoadOlder,
+  replayDone = false,
+  onReportRead,
 }: MessageItemsProps) {
   const { ref, follow, scrollToBottom } = useFollowScroll<HTMLDivElement>();
   const itemCount = items.length;
   const grouped = useMemo(() => groupItems(items), [items]);
   const thinkingExpanded = useUiStore((s) => s.thinkingExpanded);
   const setThinkingExpanded = useUiStore((s) => s.setThinkingExpanded);
+  // 重放完成前 = 重放中:历史增量块以静态样式呈现(直播流式样式留给真正的新事件)
+  const replaying = !replayDone;
 
+  // 自动跟随底部:replayDone 前也跟随 → 初始加载即见最新(未读时随后锚到分隔条)
   useEffect(() => {
     if (followLive && follow) scrollToBottom();
   }, [itemCount, assistantBuffer, thinkingBuffer, follow, scrollToBottom, followLive]);
 
+  // 初始重放完成 → 未读锚点:有分隔条则滚到「上次看到这里」上方,未读在下方慢慢翻;
+  // 无分隔条 = 已读到底,贴底。useLayoutEffect 赶在绘制前,避免闪现。
+  // 重连/新会话时 reset 会把 replayDone 置回 false → 锚点复位,下一轮重放再锚一次。
+  const anchoredRef = useRef(false);
+  const pendingAdjustRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!replayDone) {
+      anchoredRef.current = false;
+      pendingAdjustRef.current = null;
+    }
+  }, [replayDone]);
+  useLayoutEffect(() => {
+    if (!followLive || !replayDone || anchoredRef.current) return;
+    anchoredRef.current = true;
+    const el = ref.current;
+    if (!el) return;
+    const sep = el.querySelector('.msg-separator');
+    if (sep) {
+      jumpTo(
+        el,
+        Math.max(
+          0,
+          sep.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop - 12,
+        ),
+      );
+    } else {
+      jumpTo(el, el.scrollHeight); // 无未读(或已读到底):直接贴底(重连时 follow 可能是旧的)
+    }
+  }, [replayDone, followLive, ref]);
+
+  // 上滑到顶 → 拉更早一页;加载完成(loadingOlder true→false,内容前插)时按高度差补偿 scrollTop,
+  // 保持视口不跳。只在这一拍补偿:早先 loadingOlder 翻 true 的 commit 不算(那时页还没插进来)。
+  const prevLoadingRef = useRef(false);
+  useEffect(() => {
+    const prev = prevLoadingRef.current;
+    prevLoadingRef.current = loadingOlder;
+    const el = ref.current;
+    if (pendingAdjustRef.current != null && el && prev && !loadingOlder) {
+      jumpTo(el, el.scrollTop + el.scrollHeight - pendingAdjustRef.current);
+      pendingAdjustRef.current = null;
+    }
+  }, [items, loadingOlder]);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const onScroll = () => {
+      if (el.scrollTop <= 60 && hasMore && !loadingOlder && replayDone && onLoadOlder) {
+        pendingAdjustRef.current = el.scrollHeight;
+        onLoadOlder();
+      }
+    };
+    el.addEventListener('scroll', onScroll);
+    return () => el.removeEventListener('scroll', onScroll);
+  }, [hasMore, loadingOlder, replayDone, onLoadOlder, ref]);
+
+  // 已读上报:贴底(含滚到底、新消息追底)且重放完成后,延迟一拍等滚动锚定落定,节流 ~2s。
+  // follow 进依赖:用户从上方一路滚到底(读完全部未读)也算已读。
+  const lastReportRef = useRef(0);
+  useEffect(() => {
+    if (!followLive || !onReportRead || !replayDone) return;
+    const t = window.setTimeout(() => {
+      const el = ref.current;
+      if (!el) return;
+      if (el.scrollTop + el.clientHeight >= el.scrollHeight - 80) {
+        const now = Date.now();
+        if (now - lastReportRef.current > 2000) {
+          lastReportRef.current = now;
+          onReportRead();
+        }
+      }
+    }, 300);
+    return () => window.clearTimeout(t);
+  }, [followLive, onReportRead, replayDone, itemCount, follow, ref]);
+
   return (
     <div id="messages" ref={ref}>
+      {hasMore && (
+        <div className={`load-older${loadingOlder ? ' loading' : ''}`}>
+          {loadingOlder ? '加载更早…' : '↑ 上滑加载更早'}
+        </div>
+      )}
       {grouped.map((g, i) =>
         g.kind === '__group' ? (
           <ToolGroup key={`g${i}`} items={g.items} />
@@ -108,15 +210,25 @@ export function MessageItems({
           <MessageItem key={`m${i}`} item={g} sid={sid} />
         ),
       )}
-      {thinkingOpen && (
-        <ThinkingBlock
-          text={thinkingBuffer}
-          closed={false}
-          expanded={thinkingExpanded}
-          onToggle={setThinkingExpanded}
-        />
+      {replaying ? (
+        <>
+          {/* 重放中:历史增量块渲染成"已完成"静态样式,避免刷新像"快速重跑一遍" */}
+          {thinkingOpen && <ThinkingBlock text={thinkingBuffer} closed />}
+          {assistantOpen && <AssistantBubble text={assistantBuffer} md={null} sid={sid} />}
+        </>
+      ) : (
+        <>
+          {thinkingOpen && (
+            <ThinkingBlock
+              text={thinkingBuffer}
+              closed={false}
+              expanded={thinkingExpanded}
+              onToggle={setThinkingExpanded}
+            />
+          )}
+          {assistantOpen && <AssistantBubble text={assistantBuffer} md={null} open sid={sid} />}
+        </>
       )}
-      {assistantOpen && <AssistantBubble text={assistantBuffer} md={null} open sid={sid} />}
     </div>
   );
 }
@@ -135,6 +247,12 @@ function MessageItem({ item, sid }: { item: ChatItem; sid?: string | null }) {
       return <SystemBubble text={item.text} level={item.level} />;
     case 'tool':
       return <ToolCard card={item} />;
+    case 'separator':
+      return (
+        <div className="msg-separator">
+          <span>{item.text}</span>
+        </div>
+      );
     default:
       return null;
   }

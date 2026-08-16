@@ -519,6 +519,24 @@ select:focus { outline: none; border-color: var(--accent); }
 
 #messages { flex: 1; overflow-y: auto; padding: 18px 20px; scroll-behavior: smooth; }
 
+/* 上滑加载更早 / 加载中提示 */
+.load-older {
+  text-align: center; font-size: 11px; color: var(--fg-dim); opacity: .7;
+  margin: 2px 0 12px; letter-spacing: .03em; user-select: none;
+}
+.load-older.loading { opacity: .9; }
+
+/* 「上次看到这里」未读分隔条 */
+.msg-separator {
+  display: flex; align-items: center; gap: 10px;
+  margin: 4px 0 14px; color: var(--fg-dim);
+  font-size: 11px; user-select: none; opacity: .85;
+}
+.msg-separator::before, .msg-separator::after {
+  content: ''; flex: 1; height: 1px;
+  background: color-mix(in srgb, var(--fg-dim) 35%, transparent);
+}
+
 /* ---------- 消息 ---------- */
 .msg { margin-bottom: 16px; max-width: 82%; }
 .msg.user { margin-left: auto; }

@@ -10,6 +10,11 @@ export function ChatView({ sid }: { sid?: string }) {
   const assistantBuffer = useChatStore((s) => s.assistantBuffer);
   const thinkingOpen = useChatStore((s) => s.thinkingOpen);
   const thinkingBuffer = useChatStore((s) => s.thinkingBuffer);
+  const hasMore = useChatStore((s) => s.hasMore);
+  const loadingOlder = useChatStore((s) => s.loadingOlder);
+  const replayDone = useChatStore((s) => s.replayDone);
+  const loadOlder = useChatStore((s) => s.loadOlder);
+  const reportRead = useChatStore((s) => s.reportRead);
 
   return (
     <div id="chat-view">
@@ -21,6 +26,11 @@ export function ChatView({ sid }: { sid?: string }) {
         assistantOpen={assistantOpen}
         assistantBuffer={assistantBuffer}
         sid={sid}
+        hasMore={hasMore}
+        loadingOlder={loadingOlder}
+        onLoadOlder={loadOlder}
+        replayDone={replayDone}
+        onReportRead={reportRead}
       />
       <SleepTimer />
       <Composer />

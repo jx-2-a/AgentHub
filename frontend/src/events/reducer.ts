@@ -188,6 +188,14 @@ export function reduceChat(s: ChatState, ev: ServerEvent): ChatState {
     case 'meta':
       return { ...s, title: ev.label || s.title };
 
+    case 'read_marker':
+      // 未读锚点分隔条:重放时服务端在「上次看到位置」插入
+      return { ...s, messages: [...s.messages, { kind: 'separator', text: ev.text || '上次看到这里' }] };
+
+    case 'replay_done':
+      // 初始重放窗口完成(chatStore 里会单独拦截取分页游标,这里兜底置位)
+      return { ...s, replayDone: true };
+
     default:
       return s; // 向前兼容:未识别事件忽略
   }

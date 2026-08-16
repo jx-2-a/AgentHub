@@ -31,9 +31,50 @@ class Session:
     instance_id: str = None            # 由 Hub 实例管理启动的 agent（AGENT_HUB_INSTANCE）
     project_root: str = None           # 会话选定的实验路径（meta 事件更新，用于分类）
     last_active: float = field(default_factory=time.time)
+    # --- 事件流游标（历史分页窗口 + 上次看到位置）---
+    stream_len: int = 0                # 转录总事件数（也=下一行号）
+    clean_points: list = field(default_factory=list)  # 干净切点行号（无未闭合思考/回复/工具）
+    read_pos: int = 0                  # 上次看到的事件数（客户端贴底上报）
+    _o_thinking: bool = False          # 增量镜像:思考块开
+    _o_assistant: bool = False         # 增量镜像:回复块开
+    _o_tools: int = 0                  # 增量镜像:未闭合工具数
 
     def touch(self):
         self.last_active = time.time()
+
+    def mark_event(self, ev):
+        """事件已入列（history+转录）:推进 stream_len，维护开闭镜像，闭合时记一个干净切点。
+        镜像与前端 reducer 一致：thinking_delta 开思；assistant_delta/final 先收思；thinking_end 收思；
+        assistant_final/end 收回；tool_start/end 记工具。"""
+        self.stream_len += 1
+        t = ev.get("type")
+        if t == "thinking_delta":
+            self._o_thinking = True
+        elif t == "assistant_delta":
+            self._o_thinking = False
+            self._o_assistant = True
+        elif t == "thinking_end":
+            self._o_thinking = False
+        elif t == "assistant_final":
+            self._o_thinking = False
+            self._o_assistant = False
+        elif t == "assistant_end":
+            self._o_assistant = False
+        elif t == "tool_start":
+            self._o_tools += 1
+        elif t == "tool_end":
+            self._o_tools = max(0, self._o_tools - 1)
+        if not (self._o_thinking or self._o_assistant or self._o_tools):
+            self.clean_points.append(self.stream_len)
+
+    def reset_log(self):
+        """归档以上内容:转录已剪切走,事件流游标全部清零。"""
+        self.stream_len = 0
+        self.clean_points = []
+        self.read_pos = 0
+        self._o_thinking = False
+        self._o_assistant = False
+        self._o_tools = 0
 
     def trim_history(self, keep):
         """归档以上内容:只保留最近 keep 条内存历史(旧事件已在转录落盘,仅限内存+重放)。"""
@@ -55,6 +96,7 @@ class Session:
             "viewers": len(self.viewers),
             "history_len": len(self.history),
             "online": self.agent_ws is not None,
+            "read_pos": self.read_pos,
         }
 
 
@@ -82,6 +124,7 @@ class SessionRegistry:
                 "instance_id": s.instance_id,
                 "project_root": s.project_root,
                 "created": s.created,
+                "read_pos": s.read_pos,
             } for s in self._sessions.values()]
             self._state_file.write_text(
                 json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -109,9 +152,13 @@ class SessionRegistry:
             )
             s.instance_id = item.get("instance_id")
             s.project_root = item.get("project_root")
+            s.read_pos = int(item.get("read_pos") or 0)
             s.status = "disconnected"   # 重启后 agent 还没连回来
             for ev in transcripts.read(sid):
-                s.history.append(ev)
+                # 内存 history 只存 agent 事件(meta 是会话登记行,只占转录/游标)
+                if ev.get("type") != "meta":
+                    s.history.append(ev)
+                s.mark_event(ev)        # 重建 stream_len + clean_points(位置=转录行号)
             self._sessions[sid] = s
             if sid.isdigit():
                 self._counter = max(self._counter, int(sid))

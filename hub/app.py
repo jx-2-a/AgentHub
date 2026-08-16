@@ -123,10 +123,12 @@ async def ws_agent(request):
             session.agent_ws = ws
             await ws.send_json({"type": "registered", "sid": session.sid})
             # 记录开头写一条 meta（含 label），回看时能识别会话
-            hub.transcripts.append(session.sid, {
+            meta_ev = {
                 "type": "meta", "label": label, "file_roots": session.file_roots,
                 "instance_id": instance_id,
-            })
+            }
+            hub.transcripts.append(session.sid, meta_ev)
+            session.mark_event(meta_ev)   # meta 也是转录一行 → 游标同步(分页位置=行号对齐)
             hub.registry.persist()   # 会话归属/元数据有变 → 落盘
             relay.broadcast(session, {"type": "session_state", "status": "connected"})
             break
@@ -145,7 +147,7 @@ async def ws_chat(request):
         raise web.HTTPNotFound(text="会话不存在")
     ws = web.WebSocketResponse(heartbeat=30)
     await ws.prepare(request)
-    v = await relay.attach_viewer(session, ws)
+    v = await relay.attach_viewer(session, ws, hub.transcripts)
     try:
         async for msg in ws:
             if msg.type == web.WSMsgType.TEXT:
@@ -153,12 +155,19 @@ async def ws_chat(request):
                     data = json.loads(msg.data)
                 except Exception:
                     continue
+                if isinstance(data, dict) and data.get("type") == "read_pos":
+                    # 已读上报:客户端贴底时发 → 记录"上次看到位置",不转发给 agent
+                    session.read_pos = session.stream_len
+                    hub.registry.persist()
+                    continue
                 relay.forward_input(session, data)
             elif msg.type in (web.WSMsgType.CLOSED, web.WSMsgType.ERROR):
                 break
     finally:
         session.viewers.discard(v)
         v.task.cancel()
+        if v.feed:
+            v.feed.cancel()
     return ws
 
 
@@ -323,8 +332,50 @@ async def api_trim_session(request):
     hub.transcripts.archive_append(sid, events)
     hub.transcripts.delete(sid)
     session.trim_history(0)
+    session.reset_log()   # 转录已剪切走,事件流游标清零(否则分页/未读锚点对不上)
     hub.transcripts.mark_archived(sid, session.label)
     return web.json_response({"ok": True, "archived": len(events)})
+
+
+async def api_session_history(request):
+    """分页拉更早历史:before = 当前窗口起点(干净切点行号),返回它之前最近一页。
+    页在「干净切点」处切开 → 前端每页可独立 reducer 前插,无空窗、无半个思考/回复/工具块。"""
+    hub = request.app["hub"]
+    sid = request.match_info["sid"]
+    session = hub.registry.get(sid)
+    if session is None:
+        raise web.HTTPNotFound(text="会话不存在")
+    try:
+        before = int(request.query.get("before", 0))
+    except (TypeError, ValueError):
+        before = 0
+    try:
+        limit = max(1, min(int(request.query.get("limit", 300)), 2000))
+    except (TypeError, ValueError):
+        limit = 300
+    before = max(0, min(before, session.stream_len))   # 钳到有效范围(trim/删除后兜底)
+    if before <= 0:
+        return web.json_response({"events": [], "nextBefore": None, "hasMore": False})
+    # 找 < before 的干净切点:优先取使 chunk ≤ limit 的最近切点(分页步长≈limit);
+    # 若中间隔着超大块(连续切点间隙 > limit)则退而取最近切点,块不硬切。
+    b1 = 0
+    last_lt = 0
+    for p in session.clean_points:
+        if p >= before:
+            break
+        last_lt = p
+        if before - p <= limit:
+            b1 = p
+            break
+    if b1 == 0:
+        b1 = last_lt
+    events = hub.transcripts.read_range(sid, b1, before)
+    events = [e for e in events if e.get("type") in relay._DISPLAY_ONLY]
+    return web.json_response({
+        "events": events,
+        "nextBefore": b1 if b1 > 0 else None,
+        "hasMore": b1 > 0,
+    })
 
 
 async def file_handler(request):
@@ -508,6 +559,7 @@ def create_app(data_dir="data", host="127.0.0.1", port=8500):
     app.router.add_get("/api/transcript/{sid}", api_transcript)
     app.router.add_delete("/api/transcript/{sid}", api_delete_transcript)
     app.router.add_post("/api/sessions/{sid}/trim", api_trim_session)
+    app.router.add_get("/api/sessions/{sid}/history", api_session_history)
     app.router.add_get("/api/theme", api_theme)
     app.router.add_get("/api/system", api_system)
     app.router.add_post("/api/system/memfree", api_system_memfree)

@@ -103,11 +103,12 @@ class WebSessionClient(BaseSession):
             self._partial += text
 
     def log(self, text, level="info"):
-        """发送一条系统提示，带等级（info|choice|welcome|hint|silent），一段一气泡。
+        """发送一条系统提示，带等级（info|important|choice|welcome|hint|silent），一段一气泡。
 
-        level="silent" 只落转录记录、不在聊天屏展示(如内部调试信息)。
+        - important: 重要消息（带框+底色+markdown 渲染），用于中间结论/需要用户关注的汇报。
+        - level="silent" 只落转录记录、不在聊天屏展示(如内部调试信息)。
         """
-        if level not in ("info", "choice", "welcome", "hint", "silent"):
+        if level not in ("info", "important", "choice", "welcome", "hint", "silent"):
             level = "info"
         text = _renderable_to_text(text)
         if text:

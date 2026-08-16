@@ -44,8 +44,8 @@ export interface FieldSpec {
   options?: { label: string; value: string }[];
 }
 
-/** log 等级:info 简单信息 / choice 启动选择项 / welcome 欢迎卡片 / hint 提示段 / prompt 系统询问(需要输入) / silent 只落转录不上屏。 */
-export type LogLevel = 'info' | 'choice' | 'welcome' | 'hint' | 'prompt' | 'silent';
+/** log 等级:info 简单信息 / important 重要消息(带框+底色+markdown) / choice 启动选择项 / welcome 欢迎卡片 / hint 提示段 / prompt 系统询问(需要输入) / silent 只落转录不上屏。 */
+export type LogLevel = 'info' | 'important' | 'choice' | 'welcome' | 'hint' | 'prompt' | 'silent';
 
 /** WS /ws/chat/{sid} 服务器→浏览器的全部事件（PROTOCOL §5）。 */
 export type ServerEvent =

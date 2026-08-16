@@ -575,6 +575,12 @@ select:focus { outline: none; border-color: var(--accent); }
 .sys-icon { margin-right: 4px; }
 /* info:简单信息(左对齐) */
 .sys-info { }
+/* important:重要消息(带框+底色+markdown),用于中间结论/需用户关注的汇报 */
+.sys-important {
+  color: var(--fg); font-size: 13px;
+  border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  background: color-mix(in srgb, var(--bg-soft) 55%, transparent);
+}
 /* choice:启动选择项卡片(等宽 + accent 左边条,左对齐) */
 .sys-choice {
   font-family: ui-monospace, Consolas, monospace;

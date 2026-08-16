@@ -227,6 +227,10 @@ class WebSessionClient(BaseSession):
                 if self._done.is_set():
                     return None
                 if ev.wait(0.5):
+                    # interrupt 唤醒 ask 时同样要消费中断标志，否则下一个 ask
+                    # 会立即再返回 None（用户只打断一次却重复收到提示）
+                    if self._interrupt.is_set():
+                        self._interrupt.clear()
                     return self._pending_answer
         finally:
             with self._ask_lock:
@@ -258,6 +262,9 @@ class WebSessionClient(BaseSession):
                 if self._done.is_set():
                     return None
                 if ev.wait(0.5):
+                    # 同 ask：interrupt 唤醒时消费中断标志，避免下一个 requirement 重复返回 None
+                    if self._interrupt.is_set():
+                        self._interrupt.clear()
                     return self._pending_answer
         finally:
             with self._ask_lock:

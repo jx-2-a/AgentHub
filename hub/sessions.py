@@ -27,6 +27,7 @@ class Session:
     last_ask: dict = None              # 最近一个 pending ask（新 viewer 连入时补发）
     last_requirement: dict = None      # 最近一个 pending requirement（新 viewer 连入时补发）
     last_sleep: dict = None            # 最近一个休眠倒计时（新 viewer 连入时补发）
+    sleep_since: float = 0             # 休眠开始时刻(重连时按剩余秒数补发,不重置倒计时)
     last_settings: dict = None         # 最近一次 settings(运行时参数),每次连入都发 → 设置面板永有参数
     instance_id: str = None            # 由 Hub 实例管理启动的 agent（AGENT_HUB_INSTANCE）
     project_root: str = None           # 会话选定的实验路径（meta 事件更新，用于分类）

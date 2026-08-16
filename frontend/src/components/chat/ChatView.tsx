@@ -13,6 +13,7 @@ export function ChatView({ sid }: { sid?: string }) {
   const hasMore = useChatStore((s) => s.hasMore);
   const loadingOlder = useChatStore((s) => s.loadingOlder);
   const replayDone = useChatStore((s) => s.replayDone);
+  const residualStatic = useChatStore((s) => s.residualStatic);
   const loadOlder = useChatStore((s) => s.loadOlder);
   const reportRead = useChatStore((s) => s.reportRead);
 
@@ -31,6 +32,7 @@ export function ChatView({ sid }: { sid?: string }) {
         onLoadOlder={loadOlder}
         replayDone={replayDone}
         onReportRead={reportRead}
+        residualStatic={residualStatic}
       />
       <SleepTimer />
       <Composer />

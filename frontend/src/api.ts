@@ -50,6 +50,14 @@ export async function stopInstance(id: string, purge = false): Promise<void> {
   await fetch(`/api/instances/${id}${purge ? '?purge=1' : ''}`, { method: 'DELETE' });
 }
 
+/** 一键清理所有后台实例:停掉并删除实例 + 临时会话/转录(永久归档保留)。 */
+export async function cleanAllInstances(): Promise<{ cleaned: number }> {
+  const r = await fetch('/api/instances/clean_all', { method: 'POST' });
+  const d = await r.json();
+  if (d.error) throw new Error(String(d.error));
+  return d as { cleaned: number };
+}
+
 export async function restartInstance(id: string, resume = false): Promise<void> {
   await fetch(`/api/instances/${id}/restart${resume ? '?resume=1' : ''}`, { method: 'POST' });
 }

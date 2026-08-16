@@ -33,6 +33,7 @@ interface ChatStore extends ChatState {
   hasMore: boolean; // 还有更早历史可上滑分页拉取
   olderCursor: number | null; // 当前窗口起点的转录行号(下一次 before=)
   loadingOlder: boolean; // 正在拉取更早历史(防并发)
+  residualStatic: 'thinking' | 'assistant' | null; // 重放残留的增量块:保持静态呈现直到其闭合
   reset(sid: string): void;
   applyEvent(ev: ServerEvent): void;
   setConnection(c: ConnectionState): void;
@@ -65,6 +66,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   hasMore: false,
   olderCursor: null,
   loadingOlder: false,
+  residualStatic: null,
 
   // 服务器每次连接都重放「尾部窗口」→ 连接建立时清空重建(reconnect 也如此,避免重复)。
   // title 保留:meta.label 不可重放,重连后标题应沿用。
@@ -80,6 +82,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       hasMore: false,
       olderCursor: null,
       loadingOlder: false,
+      residualStatic: null,
       ...(s.sid && s.sid !== sid ? { pendingOutbox: [] } : {}), // 切了会话,丢弃旧会话的待发队列
     }));
   },
@@ -93,9 +96,26 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       set({ timer: null });
       return;
     }
-    // 初始重放完成:取分页游标 + 置位(前端据此锚滚动)
+    // 重放残留块:其闭合事件/思考被新回复收掉后,后续新块恢复直播流式
+    const rs = get().residualStatic;
+    if (
+      rs &&
+      ((rs === 'thinking' && (ev.type === 'thinking_end' || ev.type === 'assistant_delta')) ||
+        (rs === 'assistant' && (ev.type === 'assistant_final' || ev.type === 'assistant_end')))
+    ) {
+      set({ residualStatic: null });
+    }
+    // 初始重放完成:取分页游标 + 置位(前端据此锚滚动)。
+    // 断线/已结束会话 → 直接把残留增量块收成完成消息(不留"思考中…");连接中的会话 → 保持静态呈现,
+    // 避免"刷新像重新跑一遍/思考中闪现"。
     if (ev.type === 'replay_done') {
+      const open = get().thinkingOpen ? 'thinking' : get().assistantOpen ? 'assistant' : null;
       set({ replayDone: true, hasMore: !!ev.hasMore, olderCursor: ev.nextBefore ?? null });
+      if (ev.status && ev.status !== 'connected') {
+        get().finalizeBuffers();
+      } else {
+        set({ residualStatic: open });
+      }
       return;
     }
     set(capMessages(reduceChat(get(), ev))); // 自动上限:防页面无限堆长

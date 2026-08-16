@@ -23,6 +23,8 @@ export function Sidebar() {
   const error = useHubStore((s) => s.error);
   const instances = useHubStore((s) => s.instances);
   const archived = useHubStore((s) => s.archived);
+  // 底部"在线 · N 实例":只算运行中(starting/connected),已停止的不算后台
+  const running = instances.filter((i) => i.status !== 'exited').length;
 
   // 置顶只在确实有「置顶的实例或归档」时显示;残留的置顶 label(实例已删)不撑空行
   const hasPinned =
@@ -95,7 +97,7 @@ export function Sidebar() {
       <div id="sidebar-foot">
         <div id="hub-status" className={error ? 'offline' : ''}>
           <span className="dot" />
-          {error ? '离线' : '在线'} · {instances.length} 实例
+          {error ? '离线' : '在线'} · {running} 实例
         </div>
         <button id="btn-sidebar-settings" onClick={openSettings} title="外观设置" aria-label="外观设置">
           <IconGear />

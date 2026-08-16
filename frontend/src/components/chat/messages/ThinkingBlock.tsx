@@ -1,19 +1,24 @@
+import { Markdown } from '../Markdown';
+
 /**
  * 思考链折叠块。
  * - 流式中(closed=false):跟随用户偏好 thinkingExpanded —— 开=内容实时流式显示,折叠=静默累积字数;
  *   用户在流式时点开/收起会记住偏好,后续自动跟随。
  * - 完成后(closed=true):自动收起,可手动展开。
+ * - 正文用 markdown 渲染(中间结果常带表格/代码块,纯文本不好看)。
  */
 export function ThinkingBlock({
   text,
   closed,
   expanded,
   onToggle,
+  sid,
 }: {
   text: string;
   closed: boolean;
   expanded?: boolean;
   onToggle?: (open: boolean) => void;
+  sid?: string | null;
 }) {
   const trimmed = text.trim();
   const preview = trimmed
@@ -40,7 +45,9 @@ export function ThinkingBlock({
           <span className="th-hint th-live">思考中… {text.length} 字</span>
         )}
       </summary>
-      <div className="thinking-body">{text}</div>
+      <div className="thinking-body">
+        <Markdown content={text} sid={sid} />
+      </div>
     </details>
   );
 }

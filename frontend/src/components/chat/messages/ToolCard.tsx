@@ -1,4 +1,5 @@
 import type { ChatItem } from '../../../events/types';
+import { Markdown } from '../Markdown';
 
 const ARGS_LIMIT = 4000;
 
@@ -12,8 +13,8 @@ function formatArgs(v: unknown): string {
   return s.length > ARGS_LIMIT ? `${s.slice(0, ARGS_LIMIT)}\n…(已截断)` : s;
 }
 
-/** 工具卡片:显示工具名 + ✓/✗ 状态,展开显示 输入/结果/错误 三字段。 */
-export function ToolCard({ card }: { card: Extract<ChatItem, { kind: 'tool' }> }) {
+/** 工具卡片:显示工具名 + ✓/✗ 状态,展开显示 输入/结果/错误 三字段。结果(summary)用 markdown 渲染。 */
+export function ToolCard({ card, sid }: { card: Extract<ChatItem, { kind: 'tool' }>; sid?: string | null }) {
   return (
     <details className="tool-card">
       <summary>
@@ -33,7 +34,7 @@ export function ToolCard({ card }: { card: Extract<ChatItem, { kind: 'tool' }> }
           {card.summary != null && (
             <>
               <div className="t-label">结果</div>
-              <pre className="t-summary">{card.summary}</pre>
+              <Markdown content={card.summary} sid={sid} />
             </>
           )}
           {card.error != null && (

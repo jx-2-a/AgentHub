@@ -41,7 +41,7 @@ function groupItems(items: ChatItem[]): RenderedItem[] {
 }
 
 /** 工具调用伸缩组:默认开合由用户偏好决定(开过就记住,后续自动跟随)。 */
-function ToolGroup({ items }: { items: ToolItem[] }) {
+function ToolGroup({ items, sid }: { items: ToolItem[]; sid?: string | null }) {
   const toolGroupOpen = useUiStore((s) => s.toolGroupOpen);
   const setToolGroupOpen = useUiStore((s) => s.setToolGroupOpen);
   const total = items.length;
@@ -71,7 +71,7 @@ function ToolGroup({ items }: { items: ToolItem[] }) {
       </summary>
       <div className="tg-body">
         {items.map((card) => (
-          <ToolCard key={card.id} card={card} />
+          <ToolCard key={card.id} card={card} sid={sid} />
         ))}
       </div>
     </details>
@@ -92,6 +92,7 @@ interface MessageItemsProps {
   onLoadOlder?: () => void;
   replayDone?: boolean;
   onReportRead?: () => void;
+  residualStatic?: 'thinking' | 'assistant' | null; // 重放残留增量块:保持静态直至其闭合
 }
 
 /** 通用消息流:既服务实时聊天(chatStore),也服务转录回看(本地 reducer 状态)。 */
@@ -108,14 +109,15 @@ export function MessageItems({
   onLoadOlder,
   replayDone = false,
   onReportRead,
+  residualStatic = null,
 }: MessageItemsProps) {
   const { ref, follow, scrollToBottom } = useFollowScroll<HTMLDivElement>();
   const itemCount = items.length;
   const grouped = useMemo(() => groupItems(items), [items]);
   const thinkingExpanded = useUiStore((s) => s.thinkingExpanded);
   const setThinkingExpanded = useUiStore((s) => s.setThinkingExpanded);
-  // 重放完成前 = 重放中:历史增量块以静态样式呈现(直播流式样式留给真正的新事件)
-  const replaying = !replayDone;
+  // 重放中 / 重放残留增量块 → 以静态(已完成)样式呈现;直播流式样式只留给真正的新事件
+  const staticBuffers = !replayDone || !!residualStatic;
 
   // 自动跟随底部:replayDone 前也跟随 → 初始加载即见最新(未读时随后锚到分隔条)
   useEffect(() => {
@@ -177,6 +179,17 @@ export function MessageItems({
     return () => el.removeEventListener('scroll', onScroll);
   }, [hasMore, loadingOlder, replayDone, onLoadOlder, ref]);
 
+  // 内容没填满视口还有更早历史 → 自动补加载(否则窗口太短没上滑空间,PC 上划不动)。
+  // 加载后仍未满 → 继续补,直到填满或 hasMore=false。
+  useEffect(() => {
+    if (!followLive || !replayDone || !hasMore || loadingOlder || !onLoadOlder) return;
+    const el = ref.current;
+    if (!el) return;
+    if (el.scrollHeight <= el.clientHeight + 40) {
+      onLoadOlder();
+    }
+  }, [followLive, replayDone, hasMore, loadingOlder, itemCount, onLoadOlder, ref]);
+
   // 已读上报:贴底(含滚到底、新消息追底)且重放完成后,延迟一拍等滚动锚定落定,节流 ~2s。
   // follow 进依赖:用户从上方一路滚到底(读完全部未读)也算已读。
   const lastReportRef = useRef(0);
@@ -205,15 +218,15 @@ export function MessageItems({
       )}
       {grouped.map((g, i) =>
         g.kind === '__group' ? (
-          <ToolGroup key={`g${i}`} items={g.items} />
+          <ToolGroup key={`g${i}`} items={g.items} sid={sid} />
         ) : (
           <MessageItem key={`m${i}`} item={g} sid={sid} />
         ),
       )}
-      {replaying ? (
+      {staticBuffers ? (
         <>
-          {/* 重放中:历史增量块渲染成"已完成"静态样式,避免刷新像"快速重跑一遍" */}
-          {thinkingOpen && <ThinkingBlock text={thinkingBuffer} closed />}
+          {/* 重放中/重放残留:历史增量块渲染成"已完成"静态样式,避免刷新像"快速重跑一遍"/思考中闪现 */}
+          {thinkingOpen && <ThinkingBlock text={thinkingBuffer} closed sid={sid} />}
           {assistantOpen && <AssistantBubble text={assistantBuffer} md={null} sid={sid} />}
         </>
       ) : (
@@ -224,6 +237,7 @@ export function MessageItems({
               closed={false}
               expanded={thinkingExpanded}
               onToggle={setThinkingExpanded}
+              sid={sid}
             />
           )}
           {assistantOpen && <AssistantBubble text={assistantBuffer} md={null} open sid={sid} />}
@@ -240,13 +254,13 @@ function MessageItem({ item, sid }: { item: ChatItem; sid?: string | null }) {
     case 'assistant':
       return <AssistantBubble text={item.text} md={item.md} sid={sid} />;
     case 'thinking':
-      return <ThinkingBlock text={item.text} closed={item.closed} />;
+      return <ThinkingBlock text={item.text} closed={item.closed} sid={sid} />;
     case 'file':
       return <FileCard item={item} sid={sid} />;
     case 'system':
-      return <SystemBubble text={item.text} level={item.level} />;
+      return <SystemBubble text={item.text} level={item.level} sid={sid} />;
     case 'tool':
-      return <ToolCard card={item} />;
+      return <ToolCard card={item} sid={sid} />;
     case 'separator':
       return (
         <div className="msg-separator">

@@ -27,7 +27,9 @@ export function ChatHeader({ sid }: { sid?: string }) {
         <IconBack />
       </button>
       <SidebarToggle />
-      <div id="chat-title">{title || (sid ? `会话 #${sid}` : '')}</div>
+      <div id="chat-title">
+        {title ? `${title} · #${sid}` : sid ? `会话 #${sid}` : ''}
+      </div>
       <div id="chat-status">{statusText}</div>
       <div id="chat-actions">
         <button className="icon-btn" title="运行时参数" onClick={openRuntime}>

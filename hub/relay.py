@@ -135,15 +135,21 @@ async def _replay_history(v, session, window, marker_at, start, last_ask, last_s
         if last_ask and session.agent_ws is not None:
             await _put(v, last_ask)
         if last_sleep and session.agent_ws is not None:
-            await _put(v, last_sleep)
+            # 补发剩余秒数:刷新/重连后倒计时不重置,从开始时刻起算还剩多久
+            elapsed = int(time.time() - (session.sleep_since or time.time()))
+            ev = dict(last_sleep)
+            ev["seconds"] = max(1, int(last_sleep.get("seconds") or 0) - elapsed)
+            await _put(v, ev)
         # 设置参数快照:任何 viewer 连入都发 → 设置面板永远有参数,不被消息流顶掉
         if last_settings:
             await _put(v, last_settings)
-        # 重放完成 + 分页游标:前端锚滚动,hasMore 决定是否还能上滑加载更早
+        # 重放完成 + 分页游标:前端锚滚动,hasMore 决定是否还能上滑加载更早;
+        # status 让前端决定残留增量块怎么处理(断线→收掉,连接中→保持静态)
         await _put(v, {
             "type": "replay_done",
             "hasMore": start > 0,
             "nextBefore": start if start > 0 else None,
+            "status": session.status,
         })
     except asyncio.CancelledError:
         raise
@@ -217,8 +223,10 @@ async def serve_agent(session, hub):
                     session.last_requirement = None
                 elif ev.get("type") == "sleep_start":
                     session.last_sleep = ev
+                    session.sleep_since = time.time()   # 记下起点 → 重连补发剩余秒数
                 elif ev.get("type") == "sleep_end":
                     session.last_sleep = None
+                    session.sleep_since = 0
                 elif ev.get("type") == "settings":
                     session.last_settings = ev   # 快照:设置参数,每次连入都发
                 elif ev.get("type") == "meta":

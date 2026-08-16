@@ -50,7 +50,8 @@ class Hub:
 # ---------------------------------------------------------------------------
 
 async def _page(path):
-    return web.FileResponse(STATIC_DIR / path)
+    # no-cache:index.html 一改哈希 F5 立刻拿到新入口;否则浏览器默认缓存一小时,新前端不生效
+    return web.FileResponse(STATIC_DIR / path, headers={"Cache-Control": "no-cache"})
 
 
 async def index(request):
@@ -260,6 +261,23 @@ async def api_stop_instance(request):
             hub.registry.remove(sid)
             hub.transcripts.delete(sid)
     return web.json_response({"ok": True})
+
+
+async def api_clean_all_instances(request):
+    """一键清理:停掉并移除全部后台实例,同时删除其临时会话/转录(永久归档保留)。
+    避免旧实例重启恢复续接旧会话 → 同名实例串会话/刷新看到旧内容。"""
+    hub = request.app["hub"]
+    cleaned = 0
+    for inst in list(hub.instances.list()):
+        inst_id = inst["id"]
+        sid = inst.get("session_id")
+        hub.instances.stop(inst_id)
+        hub.instances.remove(inst_id)
+        if sid:
+            hub.registry.remove(sid)
+            hub.transcripts.delete(sid)
+        cleaned += 1
+    return web.json_response({"ok": True, "cleaned": cleaned})
 
 
 async def api_restart_instance(request):
@@ -554,6 +572,7 @@ def create_app(data_dir="data", host="127.0.0.1", port=8500):
     app.router.add_get("/api/instances", api_instances)
     app.router.add_post("/api/instances", api_spawn_instance)
     app.router.add_delete("/api/instances/{id}", api_stop_instance)
+    app.router.add_post("/api/instances/clean_all", api_clean_all_instances)
     app.router.add_post("/api/instances/{id}/restart", api_restart_instance)
     app.router.add_post("/api/instances/{id}/archive", api_archive_instance)
     app.router.add_get("/api/transcript/{sid}", api_transcript)
@@ -572,5 +591,6 @@ def create_app(data_dir="data", host="127.0.0.1", port=8500):
     app.router.add_get("/file", file_handler)
     app.router.add_get("/theme/bg/{name}", theme_bg)
 
+    # 哈希资源文件名带内容指纹,可安全复用浏览器缓存;index.html 由 _page 走 no-cache。
     app.router.add_static("/static/", STATIC_DIR)
     return app

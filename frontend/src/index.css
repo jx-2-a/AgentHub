@@ -601,6 +601,9 @@ select:focus { outline: none; border-color: var(--accent); }
   border: 1px solid var(--req-border);
   background: color-mix(in srgb, var(--req-bg) 40%, transparent);
 }
+/* info/hint 的 markdown:贴合气泡紧凑字号,父级 pre-wrap 由 markdown 自身接管 */
+.system-bubble .md { white-space: normal; font-size: 12.5px; line-height: 1.6; }
+.system-bubble .md p, .system-bubble .md ul, .system-bubble .md ol, .system-bubble .md table { margin: 6px 0; }
 
 /* 思考链:像工具卡一样可折叠 */
 .thinking-block {
@@ -624,9 +627,10 @@ select:focus { outline: none; border-color: var(--accent); }
 .thinking-block .th-live { color: var(--accent); }
 .thinking-block .thinking-body {
   padding: 8px 12px 10px; border-top: 1px dashed var(--border);
-  white-space: pre-wrap; color: var(--fg); max-height: 320px; overflow-y: auto;
+  color: var(--fg); max-height: 320px; overflow-y: auto;
   word-break: break-word;
 }
+.thinking-block .thinking-body .md { white-space: normal; } /* markdown 自身处理换行,父级不强制 pre-wrap */
 
 .tool-card { border: 1px solid var(--border); background: var(--glass-soft); border-radius: 8px; margin-bottom: 8px; font-size: 12px; overflow: hidden; max-width: 82%; }
 .tool-card summary { cursor: pointer; padding: 6px 12px; display: flex; align-items: center; gap: 8px; user-select: none; }
@@ -647,6 +651,9 @@ select:focus { outline: none; border-color: var(--accent); }
 .tool-card .t-label { font-size: 11px; color: var(--fg-dim); margin: 8px 0 2px; font-weight: 600; }
 .tool-card .t-label-err { color: var(--err); }
 .tool-card .t-error { color: var(--err); }
+/* 工具结果(summary)markdown:贴合卡片紧凑字号 */
+.tool-card .t-detail .md { font-size: 12.5px; line-height: 1.6; }
+.tool-card .t-detail .md p, .tool-card .t-detail .md ul, .tool-card .t-detail .md ol, .tool-card .t-detail .md table { margin: 6px 0; }
 
 /* 工具调用伸缩组:运行中展开显示进度,结束后收起 */
 .tool-group {
@@ -899,6 +906,10 @@ select:focus { outline: none; border-color: var(--accent); }
 .control-btn:hover { background: var(--glass-soft); }
 .control-btn .cb-main { font-weight: 600; display: block; }
 .control-btn .cb-sub { font-size: 11px; color: var(--fg-dim); margin-top: 2px; display: block; }
+.control-btn.danger { border-color: color-mix(in srgb, #e5534b 45%, transparent); }
+.control-btn.danger .cb-main { color: color-mix(in srgb, #e5534b 85%, var(--fg)); }
+.control-btn.danger:hover { background: color-mix(in srgb, #e5534b 8%, transparent); }
+.control-btn:disabled { opacity: .5; cursor: not-allowed; }
 
 /* 启动实例 */
 #start-agent-list { margin-bottom: 12px; max-height: 240px; overflow-y: auto; }

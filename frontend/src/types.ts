@@ -70,6 +70,6 @@ export type ServerEvent =
   | { type: 'requirement_done' }
   | { type: 'session_end' }
   | { type: 'meta'; label?: string; project_root?: string }
-  // 重放合成事件:未读锚点分隔条 / 重放完成信号(带分页游标)
+  // 重放合成事件:未读锚点分隔条 / 重放完成信号(带分页游标 + 会话状态)
   | { type: 'read_marker'; text?: string }
-  | { type: 'replay_done'; hasMore?: boolean; nextBefore?: number | null };
+  | { type: 'replay_done'; hasMore?: boolean; nextBefore?: number | null; status?: string };

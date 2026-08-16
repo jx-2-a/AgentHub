@@ -72,6 +72,9 @@ python -m hub.launch --bind 0.0.0.0 --port 8500
    - 输入：`ask`（阻塞，浏览器应答）/ `poll_guidance` / `pop_interrupt` / `sleep`
 3. 主线程 `client.run()`，agent 循环放工作线程；结束 `client.stop()`。
 
+**完整实操 + 全部踩坑点见 [INTEGRATION_GUIDE.md](INTEGRATION_GUIDE.md)**（基于 Emisinver 移植的
+真实经验：`require`/`ask` 语义、上下文压缩、重复调用检测、工具批被打断导致 400 等 12 个坑 + checklist）。
+
 **WAL**：`AgentLoop` 已 UI 无关（回调 `on_thinking/on_tool_call/on_response`），映射到 `set_status/stream_delta/tool_event`；把 REPL 搬进 worker 线程、输入改 `client.ask()`。
 
 **learnlove**：`input()` REPL 最简，同样搬进 worker + 改 `ask()`。

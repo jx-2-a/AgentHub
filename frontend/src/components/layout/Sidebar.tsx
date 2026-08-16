@@ -4,6 +4,7 @@ import { useHubStore } from '../../stores/hubStore';
 import { useUiStore } from '../../stores/uiStore';
 import { IconGear } from '../common/icons';
 import { ArchivedList } from '../sidebar/ArchivedList';
+import { FileBrowser } from '../sidebar/FileBrowser';
 import { InstanceList } from '../sidebar/InstanceList';
 
 /**
@@ -62,7 +63,7 @@ export function Sidebar() {
 
         <section className="sidebar-section">
           <div className="section-title">文件</div>
-          <div className="placeholder">待接入</div>
+          <FileBrowser />
         </section>
 
         <section className="sidebar-section">

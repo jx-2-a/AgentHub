@@ -10,7 +10,9 @@ from pathlib import Path
 from aiohttp import web
 
 from . import agents as agents_mod
+from . import files_api
 from . import relay
+from . import term
 from .files import guess_type, resolve
 from .instances import InstanceManager
 from .sessions import SessionRegistry
@@ -136,6 +138,37 @@ async def ws_chat(request):
 # ---------------------------------------------------------------------------
 # API
 # ---------------------------------------------------------------------------
+
+async def api_term_start(request):
+    """拉起一个终端 shell。?token=SHELL_TOKEN 鉴权(仅终端需要)。"""
+    if not term.terminal_enabled():
+        return web.json_response({"error": "终端未启用(未配置 SHELL_TOKEN)"}, status=400)
+    if not term.check_token(request.query.get("token", "")):
+        return web.json_response({"error": "token 错误"}, status=401)
+    try:
+        term_id, port = term.start_terminal()
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=500)
+    return web.json_response({"term_id": term_id, "port": port})
+
+
+async def api_term_stop(request):
+    term.stop_terminal(request.match_info["id"])
+    return web.json_response({"ok": True})
+
+
+async def ws_term(request):
+    """浏览器终端 WS,经 hub 代理到 ttyd。?token= 鉴权。"""
+    term_id = request.match_info["id"]
+    if not term.check_token(request.query.get("token", "")):
+        raise web.HTTPUnauthorized(text="token 错误")
+    ws = web.WebSocketResponse(heartbeat=30)
+    await ws.prepare(request)
+    ok = await term.proxy_terminal(term_id, ws)
+    if not ok:
+        await ws.close(code=1011, message=b"terminal not found")
+    return ws
+
 
 async def api_sessions(request):
     hub = request.app["hub"]
@@ -334,6 +367,12 @@ def create_app(data_dir="data", host="127.0.0.1", port=8500):
 
     app.router.add_get("/ws/agent", ws_agent)
     app.router.add_get("/ws/chat/{sid}", ws_chat)
+    app.router.add_get("/term/ws/{id}", ws_term)
+    app.router.add_post("/api/term/start", api_term_start)
+    app.router.add_post("/api/term/{id}/stop", api_term_stop)
+    app.router.add_get("/api/files", files_api.api_list)
+    app.router.add_post("/api/files/upload", files_api.api_upload)
+    app.router.add_get("/api/file", files_api.api_file)
 
     app.router.add_get("/api/sessions", api_sessions)
     app.router.add_get("/api/agents", api_agents)

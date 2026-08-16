@@ -10,7 +10,24 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # 保证 hub 包可导入
 
 
+def _load_dotenv():
+    """读项目根 .env(手机推送等配置),已存在的环境变量优先。"""
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    if not env_path.exists():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        k = k.strip()
+        v = v.strip().strip('"').strip("'")
+        if k and k not in os.environ:
+            os.environ[k] = v
+
+
 def main():
+    _load_dotenv()
     parser = argparse.ArgumentParser(description="Agent Hub — 多 agent 统一 Web 聊天")
     parser.add_argument("--port", type=int, default=int(os.environ.get("AGENT_HUB_PORT", 8500)))
     parser.add_argument("--bind", default=os.environ.get("AGENT_HUB_BIND", "127.0.0.1"))

@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react';
 import type { ChatItem } from '../../events/types';
 import { useFollowScroll } from '../../hooks/useFollowScroll';
+import { useUiStore } from '../../stores/uiStore';
 import { AssistantBubble } from './messages/AssistantBubble';
 import { FileCard } from './messages/FileCard';
 import { SystemBubble } from './messages/SystemBubble';
@@ -30,15 +31,21 @@ function groupItems(items: ChatItem[]): RenderedItem[] {
   return out;
 }
 
-/** 工具调用伸缩组:active(最后一组,工具阶段未完)时保持展开,避免工具之间反复开合。 */
-function ToolGroup({ items, active }: { items: ToolItem[]; active: boolean }) {
+/** 工具调用伸缩组:默认开合由用户偏好决定(开过就记住,后续自动跟随)。 */
+function ToolGroup({ items }: { items: ToolItem[] }) {
+  const toolGroupOpen = useUiStore((s) => s.toolGroupOpen);
+  const setToolGroupOpen = useUiStore((s) => s.setToolGroupOpen);
   const total = items.length;
   const done = items.filter((i) => i.status !== 'running').length;
   const live = done < total;
   const okCount = items.filter((i) => i.status === 'ok').length;
   const errCount = items.filter((i) => i.status === 'err').length;
   return (
-    <details className="tool-group" {...(active ? { open: true } : {})}>
+    <details
+      className="tool-group"
+      open={toolGroupOpen}
+      onToggle={(e) => setToolGroupOpen(e.currentTarget.open)}
+    >
       <summary>
         <span className="tg-icon">🔧</span>
         <span className="tg-title">工具调用 ×{total}</span>
@@ -94,7 +101,7 @@ export function MessageItems({
     <div id="messages" ref={ref}>
       {grouped.map((g, i) =>
         g.kind === '__group' ? (
-          <ToolGroup key={`g${i}`} items={g.items} active={i === grouped.length - 1} />
+          <ToolGroup key={`g${i}`} items={g.items} />
         ) : (
           <MessageItem key={`m${i}`} item={g} sid={sid} />
         ),

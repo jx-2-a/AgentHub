@@ -1,6 +1,7 @@
+import { useNavigate } from 'react-router-dom';
 import { useChatStore } from '../../stores/chatStore';
 import { useUiStore } from '../../stores/uiStore';
-import { IconGear, IconStop } from '../common/icons';
+import { IconBack, IconGear, IconStop } from '../common/icons';
 import { FullscreenToggle } from '../common/FullscreenToggle';
 import { SidebarToggle } from '../common/SidebarToggle';
 
@@ -11,6 +12,7 @@ export function ChatHeader({ sid }: { sid?: string }) {
   const connection = useChatStore((s) => s.connection);
   const interrupt = useChatStore((s) => s.interrupt);
   const openRuntime = useUiStore((s) => s.openRuntime);
+  const navigate = useNavigate();
 
   const connLabel =
     connection === 'reconnecting' ? '重连中…'
@@ -21,6 +23,9 @@ export function ChatHeader({ sid }: { sid?: string }) {
 
   return (
     <header id="chat-header">
+      <button className="icon-btn" onClick={() => navigate('/')} title="退出聊天" aria-label="退出聊天">
+        <IconBack />
+      </button>
       <SidebarToggle />
       <div id="chat-title">{title || (sid ? `会话 #${sid}` : '')}</div>
       <div id="chat-status">{statusText}</div>

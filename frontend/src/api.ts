@@ -79,7 +79,10 @@ export async function uploadBackground(file: Blob, filename: string): Promise<st
   return String(d.url);
 }
 
-/** agent 输出里的文件路径 → /file 链接（链接在 markdown.ts 后处理中生成）。 */
+/** agent 输出里的文件路径 → 绝对 /file 链接（链接在 markdown.ts 后处理中生成）。 */
 export function fileUrl(sid: string, path: string): string {
-  return `/file?sid=${encodeURIComponent(sid)}&path=${encodeURIComponent(path)}`;
+  const u = new URL('/file', window.location.origin);
+  u.searchParams.set('sid', sid);
+  u.searchParams.set('path', path);
+  return u.toString();
 }

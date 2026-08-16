@@ -1,9 +1,10 @@
 import { useEffect, useReducer, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { getTranscript } from '../api';
 import type { ServerEvent } from '../types';
 import { MessageItems } from '../components/chat/MessageItems';
 import { FullscreenToggle } from '../components/common/FullscreenToggle';
+import { IconBack } from '../components/common/icons';
 import { SidebarToggle } from '../components/common/SidebarToggle';
 import { reduceChat } from '../events/reducer';
 import { initialChatState, type ChatState } from '../events/types';
@@ -11,6 +12,7 @@ import { initialChatState, type ChatState } from '../events/types';
 /** /transcripts/:sid:只读回看。用本地 reducer 回放,不污染实时 chatStore。 */
 export function TranscriptPage() {
   const { sid } = useParams();
+  const navigate = useNavigate();
   const [state, dispatch] = useReducer(
     (s: ChatState, ev: ServerEvent) => reduceChat(s, ev),
     null,
@@ -37,6 +39,9 @@ export function TranscriptPage() {
   return (
     <div id="chat-view">
       <header id="chat-header">
+        <button className="icon-btn" onClick={() => navigate('/')} title="退出" aria-label="退出">
+          <IconBack />
+        </button>
         <SidebarToggle />
         <div id="chat-title">{state.title}</div>
         <div id="chat-status">回看</div>

@@ -1,4 +1,5 @@
-/** 把文本里的文件路径变成 /file?sid=&path= 链接（在 markdown HTML 渲染后对文本节点后处理）。 */
+/** 把文本里的文件路径变成 /file 链接（绝对 URL，agent 给相对路径，_within 校验后预览）。 */
+import { fileUrl } from './api';
 
 const FILE_EXT_RE =
   /(?:[\w\-./\\一-鿿]+\.(?:png|jpe?g|gif|bmp|webp|json|ya?ml|log|txt|md|csv|py|sh|ipynb|html?|pdf|npy|nc|xml))(?=[\s<),，。]|$)/g;
@@ -28,7 +29,7 @@ export function linkifyElement(el: HTMLElement, sid: string): void {
       } else {
         const a = document.createElement('a');
         a.className = 'filelink';
-        a.href = `/file?sid=${encodeURIComponent(sid)}&path=${encodeURIComponent(p)}`;
+        a.href = fileUrl(sid, p);   // 绝对 URL
         a.textContent = p;
         a.target = '_blank';
         a.rel = 'noopener';

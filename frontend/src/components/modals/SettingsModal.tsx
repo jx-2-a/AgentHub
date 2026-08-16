@@ -1,13 +1,31 @@
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useUiStore } from '../../stores/uiStore';
 import { ThemePanel } from './ThemePanel';
 
-/** 全局设置面板:左侧列表(外观),右侧内容;后续全局设置页在此追加。
- * 注意:agent 各自的运行时参数不在这里(见 RuntimeModal),不同 agent 配置不同。 */
+/**
+ * 全局设置面板:左侧列表(外观 / 控制),右侧内容。
+ * 「控制」= 系统控制(终端、文件管理),终端入口藏在这里,单独点开仍要 token。
+ * agent 各自的运行时参数不在这里(见 RuntimeModal)。
+ */
 export function SettingsModal() {
   const open = useUiStore((s) => s.settingsModal);
   const close = useUiStore((s) => s.closeSettings);
+  const openTerm = useUiStore((s) => s.openTerm);
+  const navigate = useNavigate();
+  const [tab, setTab] = useState<'appearance' | 'control'>('appearance');
 
   if (!open) return null;
+
+  const openFiles = () => {
+    close();
+    navigate('/files');
+  };
+
+  const openTerminal = () => {
+    close();
+    openTerm();
+  };
 
   return (
     <div
@@ -17,15 +35,41 @@ export function SettingsModal() {
       }}
     >
       <div className="modal-box settings-box">
-        <div className="settings-nav">
-          <button className="active">外观</button>
-          {/* 后续全局设置页(关于/通知等)在此追加 */}
+        <div className="settings-head">
+          <h3>设置</h3>
+          <button className="settings-close" onClick={close} title="关闭" aria-label="关闭">
+            ✕
+          </button>
         </div>
-        <div className="settings-panel">
-          <ThemePanel />
-        </div>
-        <div className="modal-actions">
-          <button onClick={close}>关闭</button>
+        <div className="settings-body">
+          <div className="settings-nav">
+            <button className={tab === 'appearance' ? 'active' : ''} onClick={() => setTab('appearance')}>
+              外观
+            </button>
+            <button className={tab === 'control' ? 'active' : ''} onClick={() => setTab('control')}>
+              控制
+            </button>
+          </div>
+          <div className="settings-panel">
+            {tab === 'appearance' ? (
+              <ThemePanel />
+            ) : (
+              <div className="control-panel">
+                <div className="settings-label">系统控制</div>
+                <p className="control-hint">终端与文件管理在这里进入;终端会再次校验 token。</p>
+                <button className="control-btn" onClick={openTerminal}>
+                  <span className="cb-ico">🖥</span>
+                  <span className="cb-main">终端</span>
+                  <span className="cb-sub">系统 Shell · 需 token</span>
+                </button>
+                <button className="control-btn" onClick={openFiles}>
+                  <span className="cb-ico">📂</span>
+                  <span className="cb-main">打开全部文件</span>
+                  <span className="cb-sub">大文件页 · 可收藏常用目录</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>

@@ -7,8 +7,9 @@ import { sendIfOpen } from '../ws';
 
 export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'ended';
 
-/** 自动上限:防止页面消息无限堆长(旧消息已在转录落盘,丢弃仅释放内存)。 */
-const MAX_MESSAGES = 600;
+/** 自动上限:防止页面消息无限堆长(旧消息已在转录落盘,丢弃仅释放内存)。
+ * 阈值取高,避免工具调用一多就顶掉前面的对话;真正的清理靠手动"归档以上内容"。 */
+const MAX_MESSAGES = 2000;
 
 function capMessages(state: ChatState): ChatState {
   if (state.messages.length <= MAX_MESSAGES) return state;
@@ -27,6 +28,7 @@ interface ChatStore extends ChatState {
   notFound: boolean; // 会话不存在(WS 握手 404)
   timer: { end: number; text: string } | null; // 定时/休眠倒计时(end = 绝对 epoch 秒)
   toast: string | null;
+  pendingOutbox: string[]; // 断线期间发不出消息的待发队列,重连后补发(避免吞消息)
   reset(sid: string): void;
   applyEvent(ev: ServerEvent): void;
   setConnection(c: ConnectionState): void;
@@ -36,6 +38,7 @@ interface ChatStore extends ChatState {
   notify(text: string): void;
   clearToast(): void;
   clearTimer(): void;
+  flushOutbox(): void;
   trimMessages(keep: number): void;
   sendMessage(text: string): void;
   sendAskAnswer(id: string, text: string | null): void;
@@ -51,11 +54,21 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   notFound: false,
   timer: null,
   toast: null,
+  pendingOutbox: [],
 
   // 服务器每次连接都重放完整历史 → 连接建立时清空重建(reconnect 也如此,避免重复)。
   // title 保留:meta.label 不可重放,重连后标题应沿用。
   reset(sid) {
-    set((s) => ({ ...initialChatState(), sid, title: s.title, connection: s.connection, notFound: false, timer: null, toast: null }));
+    set((s) => ({
+      ...initialChatState(),
+      sid,
+      title: s.title,
+      connection: s.connection,
+      notFound: false,
+      timer: null,
+      toast: null,
+      ...(s.sid && s.sid !== sid ? { pendingOutbox: [] } : {}), // 切了会话,丢弃旧会话的待发队列
+    }));
   },
   applyEvent(ev) {
     // 休眠/定时:实时倒计时(不入消息流)
@@ -90,6 +103,16 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   clearTimer() {
     set({ timer: null });
   },
+  // 重连后补发断线期间排队的消息
+  flushOutbox() {
+    const outbox = get().pendingOutbox;
+    if (!outbox.length) return;
+    const remaining: string[] = [];
+    for (const text of outbox) {
+      if (!sendIfOpen({ type: 'message', text })) remaining.push(text);
+    }
+    if (remaining.length !== outbox.length) set({ pendingOutbox: remaining });
+  },
   // 归档以上内容:保留最近 keep 条消息(旧消息已在转录落盘,丢弃仅释放内存),顶部加已归档标记
   trimMessages(keep) {
     const cur = get().messages;
@@ -109,7 +132,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   sendMessage(text) {
-    if (!sendIfOpen({ type: 'message', text })) get().notify('连接已断开');
+    if (!sendIfOpen({ type: 'message', text })) {
+      get().notify('连接已断开，消息将在重连后自动发送');
+      set((s) => ({ pendingOutbox: [...s.pendingOutbox, text] })); // 断开期间排队,不吞
+    }
     // 本地回显:立即显示自己的消息,不等 agent echo(避免断连/回显丢失时消息"被吞")
     set((s) => capMessages({ ...s, messages: [...s.messages, { kind: 'user', text }] }));
   },

@@ -46,6 +46,7 @@ export function useChatConnection(sid: string | null): void {
         const st = useChatStore.getState();
         st.reset(sid); // 清空 → 服务器重放历史 → 无重复
         st.setConnection('connected');
+        st.flushOutbox(); // 补发断线期间排队的消息
       };
 
       ws.onmessage = (e) => {

@@ -10,6 +10,7 @@ import { FileModal } from '../modals/FileModal';
 import { RequirementModal } from '../modals/RequirementModal';
 import { RuntimeModal } from '../modals/RuntimeModal';
 import { SettingsModal } from '../modals/SettingsModal';
+import { TokenModal } from '../modals/TokenModal';
 import { StartInstanceModal } from '../sidebar/StartInstanceModal';
 import { Sidebar } from './Sidebar';
 
@@ -33,6 +34,7 @@ export function AppLayout() {
       <RequirementModal />
       <RuntimeModal />
       <SettingsModal />
+      <TokenModal />
       <ContextMenu />
       <Toast />
     </div>

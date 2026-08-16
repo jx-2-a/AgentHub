@@ -19,10 +19,11 @@ class Session:
     agent_ws: object = None            # aiohttp WebSocketResponse（agent 连接）
     agent_out: object = None           # asyncio.Queue：浏览器输入 → agent 的发送队列
     viewers: set = field(default_factory=set)
-    history: deque = field(default_factory=lambda: deque(maxlen=500))
+    history: deque = field(default_factory=lambda: deque(maxlen=2000))  # 重连重放上限,和前端对齐
     last_ask: dict = None              # 最近一个 pending ask（新 viewer 连入时补发）
     last_requirement: dict = None      # 最近一个 pending requirement（新 viewer 连入时补发）
     last_sleep: dict = None            # 最近一个休眠倒计时（新 viewer 连入时补发）
+    last_settings: dict = None         # 最近一次 settings(运行时参数),每次连入都发 → 设置面板永有参数
     instance_id: str = None            # 由 Hub 实例管理启动的 agent（AGENT_HUB_INSTANCE）
     project_root: str = None           # 会话选定的实验路径（meta 事件更新，用于分类）
     last_active: float = field(default_factory=time.time)

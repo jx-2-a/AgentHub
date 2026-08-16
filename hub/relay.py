@@ -7,14 +7,20 @@
 """
 import asyncio
 import json
+import time
 
 import aiohttp
 
+from .notify import HUB_URL as _HUB_URL
+from .notify import send as _notify_send
+
 # 展示类事件（重放用）；瞬时交互事件（ask/ask_done）不重放
 # requirement 可重放:刷新后"系统询问"琥珀气泡不消失
+# settings 不走重放,而是独立快照(last_settings)每次连入都发 → 设置面板永远有参数
 _REPLAYABLE = {"log", "user", "assistant_delta", "assistant_final", "assistant_end",
                "status", "tool_start", "tool_end", "session_end", "session_state",
-               "requirement", "requirement_done", "settings"}
+               "requirement", "requirement_done"}
+
 
 
 class Viewer:
@@ -74,6 +80,7 @@ async def attach_viewer(session, ws):
     history = list(session.history)
     last_ask = session.last_ask
     last_sleep = session.last_sleep
+    last_settings = session.last_settings
     session.viewers.add(v)
     # 重放历史（含 requirement/requirement_done 等可重放事件；先发一个会话状态）
     await _safe_put(v.q, {"type": "session_state", "status": session.status})
@@ -85,6 +92,9 @@ async def attach_viewer(session, ws):
         await _safe_put(v.q, last_ask)
     if last_sleep and session.agent_ws is not None:
         await _safe_put(v.q, last_sleep)
+    # 设置参数快照:任何 viewer 连入都发 → 设置面板永远有参数,不被消息流顶掉
+    if last_settings:
+        await _safe_put(v.q, last_settings)
     return v
 
 
@@ -93,6 +103,21 @@ async def _safe_put(q, ev):
         q.put_nowait(ev)
     except asyncio.QueueFull:
         pass
+
+
+# 手机推送节流:每会话 30s 内最多一条,避免 agent 频繁 ask 刷屏
+_last_notify: dict = {}
+_NOTIFY_GAP = 30
+
+
+def _notify_input(session, text):
+    """agent 需要用户输入(ask/requirement)时推送手机通知。"""
+    now = time.time()
+    if now - _last_notify.get(session.sid, 0) < _NOTIFY_GAP:
+        return
+    _last_notify[session.sid] = now
+    url = f"{_HUB_URL}/chat/{session.sid}" if _HUB_URL else None
+    _notify_send(f"【{session.label}】需要你输入", (text or "请查看网页")[:200], url=url)
 
 
 def forward_input(session, data):
@@ -124,16 +149,20 @@ async def serve_agent(session, hub):
                 hub.transcripts.append(session.sid, ev)
                 if ev.get("type") == "ask":
                     session.last_ask = ev
+                    _notify_input(session, ev.get("prompt") or "")
                 elif ev.get("type") == "ask_done":
                     session.last_ask = None
                 elif ev.get("type") == "requirement":
                     session.last_requirement = ev
+                    _notify_input(session, ev.get("reason") or "")
                 elif ev.get("type") == "requirement_done":
                     session.last_requirement = None
                 elif ev.get("type") == "sleep_start":
                     session.last_sleep = ev
                 elif ev.get("type") == "sleep_end":
                     session.last_sleep = None
+                elif ev.get("type") == "settings":
+                    session.last_settings = ev   # 快照:设置参数,每次连入都发
                 elif ev.get("type") == "meta":
                     # agent 上报分类信息（实验选定等）→ 更新会话 + 关联实例
                     if ev.get("label"):

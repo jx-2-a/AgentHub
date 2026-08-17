@@ -2,7 +2,7 @@
 import { fileUrl } from './api';
 
 const FILE_EXT_RE =
-  /(?:[\w\-./\\一-鿿]+\.(?:png|jpe?g|gif|bmp|webp|json|ya?ml|log|txt|md|csv|py|sh|ipynb|html?|pdf|npy|nc|xml))(?=[\s<),，。]|$)/g;
+  /(?:[\w\-./\\:一-鿿]+\.(?:png|jpe?g|gif|bmp|webp|json|ya?ml|log|txt|md|csv|py|sh|ipynb|html?|pdf|npy|nc|xml))(?=[\s<),，。]|$)/g;
 
 /**
  * 对已渲染的 DOM 树做文本节点遍历，把匹配文件扩展名的路径替换成 <a>。

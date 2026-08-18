@@ -129,8 +129,19 @@ async def _replay_history(v, session, window, marker_at, start, last_ask, last_s
             if marker_at is not None and i == marker_at:
                 if not await _put(v, {"type": "read_marker", "text": "上次看到这里"}):
                     return
-            if ev.get("type") in _REPLAYABLE and not await _put(v, ev):
-                return
+            t = ev.get("type")
+            if t in _REPLAYABLE:
+                out = dict(ev)
+                out["pos"] = start + i   # 转录行号:展开思考/工具时按此取回完整内容
+                if t == "thinking_delta":
+                    out["content"] = ""          # 重放不加载思考正文,点开再取
+                elif t == "tool_start":
+                    out.pop("args", None)        # 不加载工具输入,点开再取
+                elif t == "tool_end":
+                    out.pop("summary", None)
+                    out.pop("error", None)
+                if not await _put(v, out):
+                    return
         # pending ask / sleep 不在 _REPLAYABLE → 快照补发（中途加入也能应答）
         if last_ask and session.agent_ws is not None:
             await _put(v, last_ask)
@@ -230,11 +241,10 @@ async def serve_agent(session, hub):
                 elif ev.get("type") == "settings":
                     session.last_settings = ev   # 快照:设置参数,每次连入都发
                 elif ev.get("type") == "meta":
-                    # agent 上报分类信息（实验选定等）→ 更新会话 + 关联实例
+                    # agent 上报分类信息（实验选定等）→ 只更新会话 label(聊天标题/归档命名)。
+                    # 不再覆盖实例 label:用户自定义的实例名不能被 agent 默认 label 闪回。
                     if ev.get("label"):
                         session.label = ev["label"]
-                        if session.instance_id:
-                            hub.instances.update_label(session.instance_id, ev["label"])
                     if ev.get("project_root"):
                         session.project_root = ev["project_root"]
                     hub.registry.persist()   # 实验路径等元数据落盘 → 重启后不丢

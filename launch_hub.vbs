@@ -1,11 +1,8 @@
-' AgentHub hidden launcher.
-' Runs hub_run.bat in a HIDDEN console window: no black box on screen,
-' but the hub still has a real console so terminal/ttyd keep working.
-' Used by start.bat and the autostart shortcut.
-' NOTE: use the ABSOLUTE batch path - WScript.Shell.Run does not reliably
-' resolve a relative .bat against CurrentDirectory.
+' AgentHub launcher - runs AgentHub.exe (hidden, no window to close).
+' Task Manager shows "AgentHub" (its own exe name) - robust AND labeled.
+' AgentHub.exe spawns the hub (python), which spawns gotify; all grouped under it.
+' Used by start.bat and the autostart vbs.
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set sh = CreateObject("WScript.Shell")
 dir = fso.GetParentFolderName(WScript.ScriptFullName)
-cmdline = "cmd.exe /c """ & dir & "\hub_run.bat"""
-sh.Run cmdline, 0, False
+sh.Run """" & dir & "\AgentHub.exe""", 0, False

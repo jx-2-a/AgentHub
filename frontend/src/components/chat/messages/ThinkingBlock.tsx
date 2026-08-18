@@ -35,7 +35,7 @@ export function ThinkingBlock({
       <summary>
         <span className="th-caret">▸</span>
         <span className="th-icon">💭</span>
-        <span className="th-title">思考过程</span>
+        <span className="th-title">思考内容</span>
         {closed ? (
           <>
             <span className="th-preview">{preview}</span>

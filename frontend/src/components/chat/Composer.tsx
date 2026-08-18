@@ -1,12 +1,22 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useChatStore } from '../../stores/chatStore';
 
-/** 输入栏:圆角胶囊输入框,发送按钮为内嵌箭头;ask(input 模式)时转为应答。 */
+/** 输入栏:多行输入框(Enter 发送 / Shift+Enter 换行),自动增高;ask(input 模式)时转为应答。 */
 export function Composer({ readOnly }: { readOnly?: boolean }) {
   const [text, setText] = useState('');
+  const ref = useRef<HTMLTextAreaElement>(null);
   const pendingAsk = useChatStore((s) => s.pendingAsk);
   const sendMessage = useChatStore((s) => s.sendMessage);
   const sendAskAnswer = useChatStore((s) => s.sendAskAnswer);
+
+  // 多行自动增高(上限 120px)
+  useEffect(() => {
+    const el = ref.current;
+    if (el) {
+      el.style.height = 'auto';
+      el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+    }
+  }, [text]);
 
   if (readOnly) {
     return (
@@ -29,14 +39,19 @@ export function Composer({ readOnly }: { readOnly?: boolean }) {
   return (
     <footer id="inputbar">
       <div className="composer">
-        <input
+        <textarea
           id="input"
+          ref={ref}
+          rows={1}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') submit();
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault(); // Enter=发送,不插入换行;Shift+Enter=换行
+              submit();
+            }
           }}
-          placeholder="输入消息，Enter 发送"
+          placeholder="输入消息"
           autoComplete="off"
         />
         <button id="btn-send" onClick={submit} disabled={!canSend} aria-label="发送" title="发送">

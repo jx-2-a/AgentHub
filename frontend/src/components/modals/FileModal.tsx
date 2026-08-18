@@ -8,6 +8,7 @@ export function FileModal() {
   const close = useUiStore((s) => s.closeFile);
   const [docText, setDocText] = useState<string | null>(null);
   const [zoom, setZoom] = useState(0); // 0=适应窗口;>0 缩放倍数(相对容器宽)
+  const [imgError, setImgError] = useState(false);
 
   const isMd = file ? /\.(md|markdown)$/i.test(file.name) : false;
 
@@ -20,6 +21,7 @@ export function FileModal() {
         .catch(() => setDocText('无法加载文件'));
     }
     setZoom(0); // 切文件重置缩放
+    setImgError(false);
   }, [file]);
 
   if (!file) return null;
@@ -65,14 +67,23 @@ export function FileModal() {
         </div>
         <div id="file-modal-body">
           {file.kind === 'image' ? (
-            <img
-              src={file.url}
-              alt={file.name}
-              className="fm-img"
-              onClick={() => setZoom((z) => (z ? 0 : 1))} // 点击图片:适应 ↔ 100%
-              title="点击切换 适应/实际大小"
-              style={zoom > 0 ? { width: `${zoom * 100}%`, maxWidth: 'none' } : undefined}
-            />
+            imgError ? (
+              <div className="fm-error">
+                无法打开:文件不存在或路径有误
+                <br />
+                若路径含隐藏目录(如 .agentspace),检查它前面是否有反斜杠分隔符。
+              </div>
+            ) : (
+              <img
+                src={file.url}
+                alt={file.name}
+                className="fm-img"
+                onClick={() => setZoom((z) => (z ? 0 : 1))} // 点击图片:适应 ↔ 100%
+                onError={() => setImgError(true)}
+                title="点击切换 适应/实际大小"
+                style={zoom > 0 ? { width: `${zoom * 100}%`, maxWidth: 'none' } : undefined}
+              />
+            )
           ) : isMd ? (
             <div className="fm-md">
               <Markdown content={docText ?? ''} />

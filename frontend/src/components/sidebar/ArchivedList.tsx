@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { deleteTranscript } from '../../api';
+import { deleteTranscript, renameTranscript } from '../../api';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { useHubStore } from '../../stores/hubStore';
 import { useUiStore, type ContextMenuItem } from '../../stores/uiStore';
@@ -42,6 +42,16 @@ export function ArchivedList({ pinnedOnly }: { pinnedOnly?: boolean }) {
       {
         label: pinned ? '取消置顶' : '置顶',
         onClick: () => togglePinArchive(sid),
+      },
+      {
+        label: '重命名',
+        onClick: () => {
+          const cur = archived.find((x) => x.sid === sid);
+          const name = window.prompt('重命名归档', cur?.label || `会话 #${sid}`);
+          if (name && name.trim()) {
+            void renameTranscript(sid, name.trim()).then(refresh);
+          }
+        },
       },
       {
         label: '删除记录',

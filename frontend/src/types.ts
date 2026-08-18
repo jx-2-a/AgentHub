@@ -55,11 +55,11 @@ export type ServerEvent =
   | { type: 'assistant_delta'; content: string }
   | { type: 'assistant_final'; content: string }
   | { type: 'assistant_end' }
-  | { type: 'thinking_delta'; content: string }
-  | { type: 'thinking_end' }
+  | { type: 'thinking_delta'; content: string; pos?: number }
+  | { type: 'thinking_end'; pos?: number }
   | { type: 'status'; text: string }
-  | { type: 'tool_start'; id: string; name: string; args?: unknown }
-  | { type: 'tool_end'; id: string; ok: boolean; summary?: string; error?: string }
+  | { type: 'tool_start'; id: string; name: string; args?: unknown; pos?: number }
+  | { type: 'tool_end'; id: string; ok: boolean; summary?: string; error?: string; pos?: number }
   | { type: 'file'; path: string; caption?: string }
   | { type: 'settings'; settings: FieldSpec[] }
   | { type: 'sleep_start'; seconds: number; text?: string }

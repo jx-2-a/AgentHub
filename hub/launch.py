@@ -27,6 +27,12 @@ def _load_dotenv():
 
 
 def main():
+    # 任务管理器里把进程窗口标题标成 AgentHub(手动可见窗口时显示;隐藏启动时尽力而为)
+    try:
+        import ctypes
+        ctypes.windll.kernel32.SetConsoleTitleW("AgentHub")
+    except Exception:
+        pass
     _load_dotenv()
     parser = argparse.ArgumentParser(description="Agent Hub — 多 agent 统一 Web 聊天")
     parser.add_argument("--port", type=int, default=int(os.environ.get("AGENT_HUB_PORT", 8500)))

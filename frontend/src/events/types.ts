@@ -5,8 +5,8 @@ export type ChatItem =
   | { kind: 'system'; text: string; level: LogLevel } // 系统提示(一段一气泡,带等级)
   | { kind: 'user'; text: string; turn?: number }
   | { kind: 'assistant'; text: string; md: string | null } // md 在 assistant_final 时置为渲染用 markdown
-  | { kind: 'thinking'; text: string; closed: boolean }
-  | { kind: 'tool'; id: string; name: string; args?: unknown; status: 'running' | 'ok' | 'err'; summary?: string; error?: string }
+  | { kind: 'thinking'; text: string; closed: boolean; pos?: number; hydrated?: boolean } // pos=转录行号,重放剥离后按需取回
+  | { kind: 'tool'; id: string; name: string; args?: unknown; status: 'running' | 'ok' | 'err'; summary?: string; error?: string; pos?: number; hydrated?: boolean }
   | { kind: 'file'; path: string; caption?: string }
   | { kind: 'separator'; text: string }; // 「上次看到这里」未读分隔条(重放合成)
 

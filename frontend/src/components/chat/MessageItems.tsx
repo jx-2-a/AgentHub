@@ -1,6 +1,7 @@
-import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ChatItem } from '../../events/types';
 import { useFollowScroll } from '../../hooks/useFollowScroll';
+import { useChatStore } from '../../stores/chatStore';
 import { useUiStore } from '../../stores/uiStore';
 import { AssistantBubble } from './messages/AssistantBubble';
 import { FileCard } from './messages/FileCard';
@@ -10,7 +11,11 @@ import { ToolCard } from './messages/ToolCard';
 import { UserBubble } from './messages/UserBubble';
 
 type ToolItem = Extract<ChatItem, { kind: 'tool' }>;
-type RenderedItem = ChatItem | { kind: '__group'; items: ToolItem[] };
+type ProcessItem = ChatItem | { kind: '__group'; items: ToolItem[] };
+type RenderedItem =
+  | ChatItem
+  | { kind: '__group'; items: ToolItem[] }
+  | { kind: '__process'; items: ProcessItem[] };
 
 /** 瞬间滚动(绕过 #messages 的 scroll-behavior:smooth;锚点/分页补偿要一步到位)。 */
 function jumpTo(el: HTMLElement, top: number) {
@@ -21,22 +26,46 @@ function jumpTo(el: HTMLElement, top: number) {
   });
 }
 
-/** 把连续的工具调用合成一个伸缩组(避免工具一多往上翻很久)。 */
+/** 分组:连续工具合成组;再把每轮「思考内容+工具调用」(到最终结论之前)包成可折叠 __process。
+ * 最终结论(assistant)在包外独立显示;过程中日志并入;user/file/separator 收尾独立。 */
 function groupItems(items: ChatItem[]): RenderedItem[] {
   const out: RenderedItem[] = [];
   let group: ToolItem[] = [];
+  let proc: ProcessItem[] = [];
+  const flushTools = () => {
+    if (group.length) {
+      proc.push({ kind: '__group', items: group });
+      group = [];
+    }
+  };
+  const flushProcess = () => {
+    flushTools();
+    if (proc.length) {
+      out.push({ kind: '__process', items: proc });
+      proc = [];
+    }
+  };
   for (const item of items) {
     if (item.kind === 'tool') {
       group.push(item);
+    } else if (item.kind === 'thinking') {
+      flushTools();
+      proc.push(item);
+    } else if (item.kind === 'assistant') {
+      // 最终结论:不在思考过程包里,收尾过程后独立显示
+      flushProcess();
+      out.push(item);
+    } else if (item.kind === 'system') {
+      // 过程中的日志并入 process;无过程时独立
+      if (proc.length) proc.push(item);
+      else out.push(item);
     } else {
-      if (group.length) {
-        out.push({ kind: '__group', items: group });
-        group = [];
-      }
+      // user / file / separator:先收掉开着的过程,再独立显示
+      flushProcess();
       out.push(item);
     }
   }
-  if (group.length) out.push({ kind: '__group', items: group });
+  flushProcess();
   return out;
 }
 
@@ -74,6 +103,70 @@ function ToolGroup({ items, sid }: { items: ToolItem[]; sid?: string | null }) {
           <ToolCard key={card.id} card={card} sid={sid} />
         ))}
       </div>
+    </details>
+  );
+}
+
+/** 整轮「思考过程」外层折叠(到最终结论之前),独立开合。
+ * 重放时默认收起(省空间/不重看),直播时默认展开(能看到流式);展开才渲染内部。
+ * 内部同级两节:「思考内容」(思考链)和「工具调用」(工具组)。 */
+function ProcessBlock({
+  items,
+  sid,
+  replayDone,
+}: {
+  items: ProcessItem[];
+  sid?: string | null;
+  replayDone: boolean;
+}) {
+  const [open, setOpen] = useState(!replayDone); // 独立开合,不共享
+  const hydrateBlock = useChatStore((s) => s.hydrateBlock);
+  const thinkItems = items.filter((i) => i.kind === 'thinking');
+  const rest = items.filter((i) => i.kind !== 'thinking'); // 工具组 + 过程日志
+  const thinkingCount = thinkItems.length;
+  const toolCount = rest.reduce(
+    (n, i) => n + (i.kind === '__group' ? i.items.length : 0),
+    0,
+  );
+  const label = [
+    thinkingCount ? `思考 ${thinkingCount} 段` : '',
+    toolCount ? `工具 ${toolCount} 次` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  // 展开时才取回重放时被剥离的思考正文/工具详情(按 pos 按需加载)
+  useEffect(() => {
+    if (!open) return;
+    const need: number[] = [];
+    const scan = (it: ProcessItem) => {
+      if (it.kind === '__group') {
+        it.items.forEach((t) => t.pos != null && !t.hydrated && need.push(t.pos));
+      } else if ((it.kind === 'thinking' || it.kind === 'tool') && it.pos != null && !it.hydrated) {
+        need.push(it.pos);
+      }
+    };
+    items.forEach(scan);
+    if (need.length) need.forEach((p) => void hydrateBlock(p));
+  }, [open, items, hydrateBlock]);
+  return (
+    <details className="process-block" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary>
+        <span className="pb-caret">▸</span>
+        <span className="pb-title">思考过程</span>
+        {label && <span className="pb-hint">{label}</span>}
+      </summary>
+      {open && (
+        <div className="pb-body">
+          {items.map((it, i) =>
+            it.kind === '__group' ? (
+              <ToolGroup key={`pg${i}`} items={it.items} sid={sid} />
+            ) : (
+              <MessageItem key={`pm${i}`} item={it} sid={sid} />
+            ),
+          )}
+        </div>
+      )}
     </details>
   );
 }
@@ -116,6 +209,7 @@ export function MessageItems({
   const grouped = useMemo(() => groupItems(items), [items]);
   const thinkingExpanded = useUiStore((s) => s.thinkingExpanded);
   const setThinkingExpanded = useUiStore((s) => s.setThinkingExpanded);
+  const scrollTick = useChatStore((s) => s.scrollTick);
   // 重放中 / 重放残留增量块 → 以静态(已完成)样式呈现;直播流式样式只留给真正的新事件
   const staticBuffers = !replayDone || !!residualStatic;
 
@@ -123,6 +217,11 @@ export function MessageItems({
   useEffect(() => {
     if (followLive && follow) scrollToBottom();
   }, [itemCount, assistantBuffer, thinkingBuffer, follow, scrollToBottom, followLive]);
+
+  // 发消息/应答后强制滚到底(即使已上滑读历史):scrollTick 自增触发
+  useEffect(() => {
+    if (followLive && scrollTick > 0) scrollToBottom();
+  }, [scrollTick, followLive, scrollToBottom]);
 
   // 初始重放完成 → 未读锚点:有分隔条则滚到「上次看到这里」上方,未读在下方慢慢翻;
   // 无分隔条 = 已读到底,贴底。useLayoutEffect 赶在绘制前,避免闪现。
@@ -219,6 +318,8 @@ export function MessageItems({
       {grouped.map((g, i) =>
         g.kind === '__group' ? (
           <ToolGroup key={`g${i}`} items={g.items} sid={sid} />
+        ) : g.kind === '__process' ? (
+          <ProcessBlock key={`p${i}`} items={g.items} sid={sid} replayDone={replayDone} />
         ) : (
           <MessageItem key={`m${i}`} item={g} sid={sid} />
         ),

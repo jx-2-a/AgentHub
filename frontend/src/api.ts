@@ -62,6 +62,24 @@ export async function restartInstance(id: string, resume = false): Promise<void>
   await fetch(`/api/instances/${id}/restart${resume ? '?resume=1' : ''}`, { method: 'POST' });
 }
 
+/** 重命名实例显示名(同步会话 label)。 */
+export async function renameInstance(id: string, label: string): Promise<void> {
+  await fetch(`/api/instances/${id}/label`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ label }),
+  });
+}
+
+/** 重命名归档/会话显示名。 */
+export async function renameTranscript(sid: string, label: string): Promise<void> {
+  await fetch(`/api/transcript/${sid}/rename`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ label }),
+  });
+}
+
 export async function archiveInstance(id: string): Promise<void> {
   await fetch(`/api/instances/${id}/archive`, { method: 'POST' });
 }
@@ -88,6 +106,13 @@ export async function getOlderEvents(
   const r = await fetch(`/api/sessions/${sid}/history?before=${before}&limit=${limit}`);
   if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
   return r.json() as Promise<{ events: ServerEvent[]; nextBefore: number | null; hasMore: boolean }>;
+}
+
+/** 按块的结束行号取回完整原始事件(重放/分页已剥离内容,展开时按需取)。 */
+export async function fetchBlock(sid: string, end: number): Promise<ServerEvent[]> {
+  const r = await fetch(`/api/sessions/${sid}/block?end=${end}`);
+  const d = await r.json();
+  return Array.isArray(d.events) ? (d.events as ServerEvent[]) : [];
 }
 
 export async function uploadBackground(file: Blob, filename: string): Promise<string> {

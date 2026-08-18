@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import type { Instance } from '../../types';
-import { archiveInstance, restartInstance, stopInstance, trimSession } from '../../api';
+import { archiveInstance, renameInstance, restartInstance, stopInstance, trimSession } from '../../api';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { useChatStore } from '../../stores/chatStore';
 import { useHubStore } from '../../stores/hubStore';
@@ -32,6 +32,15 @@ export function InstanceItem({ instance }: { instance: Instance }) {
       {
         label: pinned ? '取消置顶' : '置顶',
         onClick: () => togglePin(instance.id),
+      },
+      {
+        label: '重命名',
+        onClick: () => {
+          const name = window.prompt('重命名实例', instance.label || instance.agent_key || '');
+          if (name && name.trim()) {
+            void renameInstance(instance.id, name.trim()).then(refresh);
+          }
+        },
       },
       {
         label: '重启',

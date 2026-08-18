@@ -107,7 +107,16 @@ export function reduceChat(s: ChatState, ev: ServerEvent): ChatState {
 
     case 'thinking_end': {
       const fl = flushThinking(s);
-      return { ...s, ...fl };
+      // 重放剥离的思考块带 pos:展开时按 pos 取回完整内容
+      let messages = fl.messages;
+      if (ev.pos !== undefined && messages.length) {
+        const last = messages[messages.length - 1];
+        if (last.kind === 'thinking') {
+          const t = last as Extract<ChatItem, { kind: 'thinking' }>;
+          messages = [...messages.slice(0, -1), { ...t, pos: ev.pos }];
+        }
+      }
+      return { ...s, ...fl, messages };
     }
 
     case 'status':
@@ -144,6 +153,7 @@ export function reduceChat(s: ChatState, ev: ServerEvent): ChatState {
         status: ev.ok ? 'ok' : 'err',
         ...(summary !== undefined ? { summary } : {}),
         ...(error !== undefined ? { error } : {}),
+        ...(ev.pos !== undefined ? { pos: ev.pos } : {}), // 重放剥离的工具卡:展开按 pos 取回详情
       };
       const toolIndex = { ...s.toolIndex };
       delete toolIndex[ev.id];

@@ -1,6 +1,6 @@
 /** 聊天 store:WS 事件流状态 + 发送 action(经 ws.ts 发送)。 */
 import { create } from 'zustand';
-import { getOlderEvents } from '../api';
+import { fetchBlock, getOlderEvents } from '../api';
 import type { ServerEvent } from '../types';
 import { reduceChat } from '../events/reducer';
 import { initialChatState, type ChatState } from '../events/types';
@@ -12,7 +12,7 @@ export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'reconnectin
  * 阈值取高,避免工具调用一多就顶掉前面的对话;真正的清理靠手动"归档以上内容"。 */
 const MAX_MESSAGES = 2000;
 
-function capMessages(state: ChatState): ChatState {
+function capMessages<T extends ChatState>(state: T): T {
   if (state.messages.length <= MAX_MESSAGES) return state;
   const drop = state.messages.length - MAX_MESSAGES;
   const messages = state.messages.slice(drop);
@@ -34,6 +34,7 @@ interface ChatStore extends ChatState {
   olderCursor: number | null; // 当前窗口起点的转录行号(下一次 before=)
   loadingOlder: boolean; // 正在拉取更早历史(防并发)
   residualStatic: 'thinking' | 'assistant' | null; // 重放残留的增量块:保持静态呈现直到其闭合
+  scrollTick: number; // 发送消息后自增 → 视图强制滚到底(即使已上滑读历史)
   reset(sid: string): void;
   applyEvent(ev: ServerEvent): void;
   setConnection(c: ConnectionState): void;
@@ -47,6 +48,7 @@ interface ChatStore extends ChatState {
   trimMessages(keep: number): void;
   finalizeBuffers(): void; // 断线时把开着的思考/回复块收成闭合,不留"思考中…"/光标
   loadOlder(): Promise<void>; // 上滑到顶时拉更早一页,前插,保持滚动位置
+  hydrateBlock(pos: number): Promise<void>; // 展开思考/工具块时按 pos 取回完整内容
   reportRead(): void; // 贴底时上报"上次看到位置"
   sendMessage(text: string): void;
   sendAskAnswer(id: string, text: string | null): void;
@@ -67,6 +69,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   olderCursor: null,
   loadingOlder: false,
   residualStatic: null,
+  scrollTick: 0,
 
   // 服务器每次连接都重放「尾部窗口」→ 连接建立时清空重建(reconnect 也如此,避免重复)。
   // title 保留:meta.label 不可重放,重连后标题应沿用。
@@ -83,6 +86,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       olderCursor: null,
       loadingOlder: false,
       residualStatic: null,
+      scrollTick: 0,
       ...(s.sid && s.sid !== sid ? { pendingOutbox: [] } : {}), // 切了会话,丢弃旧会话的待发队列
     }));
   },
@@ -222,21 +226,51 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     sendIfOpen({ type: 'read_pos' });
   },
 
+  // 展开思考/工具块时,按 pos 取回重放时被剥离的完整内容并打回消息
+  async hydrateBlock(pos) {
+    const { sid } = get();
+    if (!sid || pos == null) return;
+    try {
+      const events = await fetchBlock(sid, pos);
+      let text = '';
+      let args: unknown;
+      let summary: string | undefined;
+      let error: string | undefined;
+      for (const ev of events) {
+        if (ev.type === 'thinking_delta') text += ev.content;
+        else if (ev.type === 'tool_start') args = ev.args;
+        else if (ev.type === 'tool_end') {
+          summary = ev.summary;
+          error = ev.error;
+        }
+      }
+      set((s) => ({
+        messages: s.messages.map((m) => {
+          if (m.kind === 'thinking' && m.pos === pos) return { ...m, text, hydrated: true };
+          if (m.kind === 'tool' && m.pos === pos) return { ...m, args, summary, error, hydrated: true };
+          return m;
+        }),
+      }));
+    } catch {
+      /* 取回失败保持摘要,不阻塞 */
+    }
+  },
+
   sendMessage(text) {
     if (!sendIfOpen({ type: 'message', text })) {
       get().notify('连接已断开，消息将在重连后自动发送');
       set((s) => ({ pendingOutbox: [...s.pendingOutbox, text] })); // 断开期间排队,不吞
     }
     // 本地回显:立即显示自己的消息,不等 agent echo(避免断连/回显丢失时消息"被吞")
-    set((s) => capMessages({ ...s, messages: [...s.messages, { kind: 'user', text }] }));
+    set((s) => capMessages({ ...s, scrollTick: s.scrollTick + 1, messages: [...s.messages, { kind: 'user', text }] }));
   },
   sendAskAnswer(id, text) {
     if (!sendIfOpen({ type: 'ask_answer', id, text })) get().notify('连接已断开');
-    set({ pendingAsk: null }); // 本地立即关闭,不等 agent 回 ask_done
+    set((s) => ({ pendingAsk: null, scrollTick: s.scrollTick + 1 })); // 本地立即关闭,不等 agent 回 ask_done
   },
   sendRequirementAnswer(id, values) {
     if (!sendIfOpen({ type: 'requirement_answer', id, values })) get().notify('连接已断开');
-    set({ pendingRequirement: null }); // 本地立即关闭,不等 agent 回 requirement_done
+    set((s) => ({ pendingRequirement: null, scrollTick: s.scrollTick + 1 })); // 本地立即关闭,不等 agent 回 requirement_done
   },
   sendSetting(key, value) {
     if (!sendIfOpen({ type: 'settings_set', key, value })) get().notify('连接已断开');

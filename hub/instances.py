@@ -202,6 +202,7 @@ class InstanceManager:
         inst = self._instances.get(inst_id)
         if inst and label:
             inst.label = label
+            self._save_active()   # 改名后落盘,重启恢复仍用新名
 
     def session_instance(self, session_id):
         with self._lock:
@@ -215,5 +216,16 @@ class InstanceManager:
         self._save_active()
 
     def shutdown(self):
+        # 先记录在跑实例 → 停进程后把列表写回 active.json(否则重启后 restore() 没东西可拉起,
+        # 用户在跑/停着的实例会在重启中丢失)。
+        active = [{"id": i.id, "agent_key": i.agent_key, "label": i.label}
+                  for i in self._instances.values()
+                  if i.status in ("starting", "connected")]
         for inst_id in list(self._instances):
             self.stop(inst_id)
+        if active:
+            try:
+                self._active_file.write_text(
+                    json.dumps(active, ensure_ascii=False, indent=1), encoding="utf-8")
+            except OSError:
+                pass

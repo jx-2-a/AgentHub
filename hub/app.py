@@ -280,6 +280,52 @@ async def api_clean_all_instances(request):
     return web.json_response({"ok": True, "cleaned": cleaned})
 
 
+async def api_rename_instance(request):
+    """重命名实例(显示名):同时同步其会话 label,聊天标题/转录回看一致。"""
+    hub = request.app["hub"]
+    inst_id = request.match_info["id"]
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    label = (data.get("label") or "").strip()
+    if not label:
+        return web.json_response({"error": "名称不能为空"}, status=400)
+    inst = hub.instances.get(inst_id)
+    if not inst:
+        return web.json_response({"error": "实例不存在"}, status=400)
+    hub.instances.update_label(inst_id, label)
+    if inst.session_id:
+        s = hub.registry.get(inst.session_id)
+        if s:
+            s.label = label
+            hub.registry.persist()
+    return web.json_response({"ok": True, "label": label})
+
+
+async def api_rename_transcript(request):
+    """重命名归档/会话的显示名(归档卡 label;活跃会话改 session.label)。"""
+    hub = request.app["hub"]
+    sid = request.match_info["sid"]
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    label = (data.get("label") or "").strip()
+    if not label:
+        return web.json_response({"error": "名称不能为空"}, status=400)
+    if hub.transcripts.is_archived(sid):
+        hub.transcripts.rename_archived(sid, label)
+    else:
+        s = hub.registry.get(sid)
+        if s:
+            s.label = label
+            hub.registry.persist()
+        else:
+            return web.json_response({"error": "会话不存在"}, status=404)
+    return web.json_response({"ok": True, "label": label})
+
+
 async def api_restart_instance(request):
     """右键"重启实例":停止并按原配置重拉;?resume=1 时续接旧会话。"""
     hub = request.app["hub"]
@@ -388,12 +434,49 @@ async def api_session_history(request):
     if b1 == 0:
         b1 = last_lt
     events = hub.transcripts.read_range(sid, b1, before)
-    events = [e for e in events if e.get("type") in relay._DISPLAY_ONLY]
+    out = []
+    for k, e in enumerate(events):
+        if e.get("type") not in relay._DISPLAY_ONLY:
+            continue
+        ev = dict(e)
+        ev["pos"] = b1 + k   # 转录行号:展开思考/工具时按此取回完整内容
+        if ev.get("type") == "thinking_delta":
+            ev["content"] = ""      # 分页也不加载思考正文,点开再取
+        elif ev.get("type") == "tool_start":
+            ev.pop("args", None)
+        elif ev.get("type") == "tool_end":
+            ev.pop("summary", None)
+            ev.pop("error", None)
+        out.append(ev)
     return web.json_response({
-        "events": events,
+        "events": out,
         "nextBefore": b1 if b1 > 0 else None,
         "hasMore": b1 > 0,
     })
+
+
+async def api_session_block(request):
+    """按块的结束行号取回完整原始事件(重放/分页已剥离内容,展开时按需取)。"""
+    hub = request.app["hub"]
+    sid = request.match_info["sid"]
+    session = hub.registry.get(sid)
+    if session is None:
+        raise web.HTTPNotFound(text="会话不存在")
+    try:
+        end = int(request.query.get("end", -1))
+    except (TypeError, ValueError):
+        end = -1
+    if end < 0 or end >= session.stream_len:
+        return web.json_response({"events": []})
+    events = hub.transcripts.read(sid)
+    # 从 end 往回找块起点:上一个 thinking_end/tool_end/assistant_end/user 之后
+    start = 0
+    for j in range(end - 1, -1, -1):
+        t = events[j].get("type")
+        if t in ("thinking_end", "tool_end", "assistant_end", "user"):
+            start = j + 1
+            break
+    return web.json_response({"events": events[start:end + 1], "pos": start})
 
 
 async def file_handler(request):
@@ -405,7 +488,9 @@ async def file_handler(request):
         raise web.HTTPNotFound()
     fp = resolve(session, path)
     if fp is None:
-        raise web.HTTPForbidden(text="路径越界或文件不存在")
+        raise web.HTTPForbidden(
+            text="文件不存在或不在可访问范围。"
+                 "若路径里含隐藏目录(如 .agentspace),请检查它前面是否有反斜杠分隔符。")
     mime, inline = guess_type(fp)
     headers = {}
     if not inline:
@@ -489,23 +574,26 @@ async def api_system_settings_notify(request):
 
 
 async def api_system_restart(request):
-    """重启 Hub 服务:spawn 独立重启助手,先停实例/终端,然后退出自己。"""
+    """重启 Hub 服务。
+    在 AgentHub.exe 包装器下:停实例/终端后退出 → 包装器自动重新拉起 hub(gotify 不受影响)。
+    独立运行(无包装器):spawn relaunch 助手接管拉起。"""
     hub = request.app["hub"]
-    cmd = [sys.executable, "-m", "hub.relaunch",
-           str(hub.port), str(hub.host), str(hub.data_dir)]
-    try:
-        subprocess.Popen(
-            cmd, cwd=str(_HUB_ROOT),
-            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-    except Exception as e:
-        return web.json_response({"ok": False, "detail": str(e)}, status=500)
-    # 先停实例/终端,避免旧实例被新 hub 的 restore() 重复拉起
     hub.registry.persist()   # 落盘会话,重启后 agent 能续接原 sid
     hub.instances.shutdown()
     term.stop_all()
-    # 响应发回后再退出;重启助手已接管后续拉起
+    wrapped = bool(os.environ.get("AGENTHUB_WRAPPER"))
+    if not wrapped:
+        cmd = [sys.executable, "-m", "hub.relaunch",
+               str(hub.port), str(hub.host), str(hub.data_dir)]
+        try:
+            subprocess.Popen(
+                cmd, cwd=str(_HUB_ROOT),
+                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        except Exception as e:
+            return web.json_response({"ok": False, "detail": str(e)}, status=500)
+    # 响应发回后再退出;包装器(或 relaunch)接管后续拉起
     asyncio.get_running_loop().call_later(1.2, lambda: os._exit(0))
     return web.json_response({"ok": True, "detail": "正在重启服务…"})
 
@@ -548,9 +636,28 @@ async def _favicon_no_cache(request, handler):
     return resp
 
 
+def _ensure_gotify():
+    """若 80 端口空闲则后台拉起 Gotify(作为 hub 子进程 → 任务管理器归到 AgentHub 下)。"""
+    exe = _HUB_ROOT / "gotify" / "gotify-windows-amd64.exe"
+    if not exe.exists():
+        return
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("0.0.0.0", 80))
+        except OSError:
+            return   # 80 被占 = gotify 已在跑
+    subprocess.Popen(
+        [str(exe)],
+        cwd=str(_HUB_ROOT / "gotify"),
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+
+
 def create_app(data_dir="data", host="127.0.0.1", port=8500):
     app = web.Application(middlewares=[_favicon_no_cache])
     app["hub"] = Hub(data_dir, host, port)
+    _ensure_gotify()   # 随 hub 启动拉起通知服务(幂等:已跑则跳过)
     # 启动时恢复上次在跑的实例；优雅关停：杀掉所有实例
     app["hub"].instances.restore()
     app["hub"].registry.prune(app["hub"].instances)   # 清理已删除/重启遗留的孤儿会话
@@ -582,12 +689,15 @@ def create_app(data_dir="data", host="127.0.0.1", port=8500):
     app.router.add_post("/api/instances", api_spawn_instance)
     app.router.add_delete("/api/instances/{id}", api_stop_instance)
     app.router.add_post("/api/instances/clean_all", api_clean_all_instances)
+    app.router.add_post("/api/instances/{id}/label", api_rename_instance)
+    app.router.add_post("/api/transcript/{sid}/rename", api_rename_transcript)
     app.router.add_post("/api/instances/{id}/restart", api_restart_instance)
     app.router.add_post("/api/instances/{id}/archive", api_archive_instance)
     app.router.add_get("/api/transcript/{sid}", api_transcript)
     app.router.add_delete("/api/transcript/{sid}", api_delete_transcript)
     app.router.add_post("/api/sessions/{sid}/trim", api_trim_session)
     app.router.add_get("/api/sessions/{sid}/history", api_session_history)
+    app.router.add_get("/api/sessions/{sid}/block", api_session_block)
     app.router.add_get("/api/theme", api_theme)
     app.router.add_get("/api/system", api_system)
     app.router.add_post("/api/system/memfree", api_system_memfree)

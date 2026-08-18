@@ -638,6 +638,32 @@ select:focus { outline: none; border-color: var(--accent); }
 }
 .thinking-block .thinking-body .md { white-space: normal; } /* markdown 自身处理换行,父级不强制 pre-wrap */
 
+/* 整轮「思考过程」外层折叠:默认收起只显摘要,展开才渲染内部 */
+.process-block {
+  border: 1px solid var(--border);
+  background: var(--glass-soft);
+  border-radius: 10px;
+  margin-bottom: 14px;
+  max-width: 82%;
+  overflow: hidden;
+}
+.process-block summary {
+  cursor: pointer; padding: 7px 12px;
+  display: flex; align-items: center; gap: 8px;
+  user-select: none;
+}
+.process-block .pb-caret { color: var(--fg-dim); font-size: 10px; transition: transform .15s; }
+.process-block[open] .pb-caret { transform: rotate(90deg); }
+.process-block .pb-icon { flex: none; }
+.process-block .pb-title { font-weight: 600; font-size: 13px; }
+.process-block .pb-hint { margin-left: auto; color: var(--fg-dim); font-size: 12px; white-space: nowrap; }
+.process-block .pb-body { border-top: 1px dashed var(--border); padding: 8px 12px 10px; }
+/* 过程块内部的项目填满整块,不再二次缩成 82%(否则文字只占大气泡的一小块) */
+.process-block .pb-body .thinking-block,
+.process-block .pb-body .tool-group,
+.process-block .pb-body .file-card,
+.process-block .pb-body .msg { max-width: 100%; }
+
 .tool-card { border: 1px solid var(--border); background: var(--glass-soft); border-radius: 8px; margin-bottom: 8px; font-size: 12px; overflow: hidden; max-width: 82%; }
 .tool-card summary { cursor: pointer; padding: 6px 12px; display: flex; align-items: center; gap: 8px; user-select: none; }
 .tool-card summary:hover { background: var(--glass); }
@@ -741,6 +767,8 @@ select:focus { outline: none; border-color: var(--accent); }
   flex: 1; min-width: 0;
   border: none; outline: none; background: transparent;
   color: var(--fg); font-size: 14px; padding: 9px 0;
+  resize: none; box-sizing: border-box; line-height: 1.5;
+  max-height: 120px; white-space: pre-wrap; word-break: break-word;
 }
 #input::placeholder { color: var(--fg-dim); }
 #btn-send {
@@ -832,6 +860,10 @@ select:focus { outline: none; border-color: var(--accent); }
 #file-modal-body img { max-width: 100%; border-radius: 6px; }
 #file-modal-body .fm-img { cursor: zoom-in; }
 #file-modal-body .fm-md { padding: 4px 2px; }
+#file-modal-body .fm-error {
+  color: var(--fg-dim); font-size: 13px; text-align: center; padding: 40px 20px;
+  border: 1px dashed var(--border); border-radius: 10px;
+}
 #file-modal-body pre { white-space: pre-wrap; word-break: break-word; font-size: 13px; }
 
 /* settings 行 */
@@ -984,7 +1016,7 @@ select:focus { outline: none; border-color: var(--accent); }
   #main { width: 100%; }
 
   .msg { max-width: 95%; }
-  .tool-group, .tool-card, .file-card, .thinking-block { max-width: 95%; } /* 与消息宽度一致 */
+  .tool-group, .tool-card, .file-card, .thinking-block, .process-block { max-width: 95%; } /* 与消息宽度一致 */
   #messages { padding: 14px 12px; }
 
   #chat-header { padding: 0 12px; padding-top: env(safe-area-inset-top); }

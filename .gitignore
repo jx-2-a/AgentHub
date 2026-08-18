@@ -1,5 +1,6 @@
 # 依赖的第三方开源项目(深拷贝,不入库)
 deepseek-harness-master/
+deepseek-harness-dsh-v0.1.0-rc.7/
 
 # 运行时数据(转录/主题/实例/agents.json)
 data/
@@ -25,3 +26,7 @@ gotify/
 
 # 机器相关的启动快捷方式(由 setup_autostart.ps1 生成)
 启动AgentHub.lnk
+
+# AgentHub.exe 包装器(编译产物,含机器路径,由 build_agenthub_exe.ps1 生成)
+AgentHub.exe
+nul

@@ -120,6 +120,21 @@ class TranscriptStore:
         except OSError:
             pass
 
+    def rename_archived(self, sid, label):
+        """改归档卡显示名(保留归档时间)。"""
+        p = self._archives_dir() / f"{sid}.json"
+        data = {"sid": sid, "label": label, "archived_at": time.time()}
+        if p.exists():
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+                data["label"] = label
+            except Exception:
+                pass
+        try:
+            p.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
+
     def archived_list(self):
         """已显式归档的会话: [(sid, label, archived_at)] 按时间降序。"""
         out = []
